@@ -51,17 +51,40 @@ def test_readme_publishes_hacs_custom_repository_installation() -> None:
     """The README describes the published HACS custom-repository flow."""
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
 
-    assert HACS_MY_LINK in readme
-    assert "https://my.home-assistant.io/badges/hacs_repository.svg" in readme
-    assert REPOSITORY in readme
-    assert "**Integration**" in readme
-    assert "Home Assistant 2026.7.2 or newer" in readme
-    assert "Restart Home Assistant" in readme
-    assert "Settings > Devices & services" in readme
-    assert "Future published releases appear as updates in HACS." in readme
+    hacs_section = readme.split("### HACS custom repository (recommended)", maxsplit=1)[
+        1
+    ].split("### Manual", maxsplit=1)[0]
+    hacs_badge = (
+        "[![Open your Home Assistant instance and add this repository to HACS.]"
+        "(https://my.home-assistant.io/badges/hacs_repository.svg)]"
+        f"({HACS_MY_LINK})"
+    )
+
+    assert hacs_badge in hacs_section
+    hacs_text = " ".join(hacs_section.split())
+    expected_order = (
+        "Home Assistant 2026.7.2 or newer",
+        "open HACS",
+        "three-dot menu in the upper-right",
+        "**Custom repositories**",
+        REPOSITORY,
+        "**Integration**",
+        "Install **Tuya Smart Lock**",
+        "Restart Home Assistant",
+        "Settings > Devices & services",
+        "Future published releases appear as updates in HACS.",
+        "**Settings > Updates**",
+        "restart Home Assistant afterward",
+    )
+    cursor = 0
+    for phrase in expected_order:
+        position = hacs_text.find(phrase, cursor)
+        assert position >= 0, f"Missing or out of order: {phrase}"
+        cursor = position + len(phrase)
+
     assert "not installable from HACS yet" not in readme
     assert "Neither default-branch publication" not in readme
-    assert "HACS default" not in readme
+    assert "available in the HACS default catalog" not in readme
 
 
 def test_hacs_metadata_requires_supported_home_assistant_release() -> None:

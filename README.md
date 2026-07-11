@@ -71,15 +71,15 @@ and unlock the device before configuring Home Assistant.
 [![Open your Home Assistant instance and add this repository to HACS.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=ahmadtawakol&repository=tuya-smart-lock&category=integration)
 
 1. Verify that you are running Home Assistant 2026.7.2 or newer.
-2. Use the badge above, or manually open **HACS > Integrations > Custom
-   repositories**, add
-   `https://github.com/ahmadtawakol/tuya-smart-lock`, and choose
-   **Integration**.
+2. Use the badge above, or manually open HACS, select the three-dot menu in the
+   upper-right, then select **Custom repositories**. Add
+   `https://github.com/ahmadtawakol/tuya-smart-lock` and choose **Integration**.
 3. Install **Tuya Smart Lock**.
 4. Restart Home Assistant.
 5. Go to **Settings > Devices & services > Add integration > Tuya Smart Lock**.
 
-Future published releases appear as updates in HACS.
+Future published releases appear as updates in HACS. Install them through
+**Settings > Updates** or HACS, then restart Home Assistant afterward.
 
 ### Manual installation (fallback)
 
