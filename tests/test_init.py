@@ -1,5 +1,6 @@
 """Tests for Tuya Smart Lock integration setup and unloading."""
 
+from importlib import import_module
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
@@ -48,6 +49,16 @@ def _entry(hass) -> MockConfigEntry:
     )
     entry.add_to_hass(hass)
     return entry
+
+
+@pytest.mark.parametrize("platform", PLATFORMS)
+def test_forwarded_platform_module_is_importable(platform: Platform) -> None:
+    """Every platform advertised by setup provides its standard setup hook."""
+    module = import_module(
+        f"custom_components.tuya_smart_lock.{platform.value}"
+    )
+
+    assert callable(module.async_setup_entry)
 
 
 async def test_setup_uses_shared_session_refreshes_then_forwards(hass) -> None:
