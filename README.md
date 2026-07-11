@@ -148,11 +148,7 @@ credential payload.
 ## Support status
 
 [GitHub Issues on the fork](https://github.com/ahmadtawakol/tuya-smart-lock/issues)
-is the designated support path and must be enabled before publication. For this
-feature branch, the repository's Issues and public repository metadata are
-separate maintainer settings that may not be enabled yet; this document does
-not present the tracker as already available. Once Issues is enabled, use it for
-sanitized bug reports and support requests.
+is the active support path for sanitized bug reports and support requests.
 
 ## License
 
