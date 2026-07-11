@@ -73,10 +73,22 @@ to entities.
 
 ### Data coordinator
 
-A Home Assistant `DataUpdateCoordinator` performs one shared shadow-properties
-request every 30 seconds. It normalizes the response into a mapping keyed by
-datapoint code while retaining each property's `dp_id`, value, and Tuya update
-timestamp.
+A Home Assistant `DataUpdateCoordinator` performs one shared request every 30
+seconds to:
+
+`GET /v2.0/cloud/thing/{device_id}/shadow/properties`
+
+The expected response is `result.properties`, where every property can contain
+`code`, `dp_id`, `value`, and `time`. Tuya normally returns `time` as a
+13-digit Unix timestamp in milliseconds. The normalizer also accepts a
+10-digit Unix timestamp in seconds and converts it to milliseconds. Continuous
+state values remain usable when `time` is missing or malformed, but an
+event-source property without a valid timestamp cannot emit an event or advance
+its event cursor. That condition is logged at debug level without including the
+property value.
+
+The coordinator normalizes valid properties into a mapping keyed by datapoint
+code while retaining each property's `dp_id`, value, and normalized timestamp.
 
 The coordinator is the only polling source for all entities. This prevents
 duplicate requests and keeps availability and refresh behavior consistent.
@@ -107,15 +119,32 @@ Open Service, enable remote control, and select the matching data center.
 | --- | --- | --- |
 | Lock | `lock_motor_state` | `true` is unlocked and `false` is locked; supports lock and unlock commands. |
 | Battery | `battery_percentage`, falling back to `residual_electricity` | Percentage sensor using whichever alias the endpoint returns. |
-| Doorbell | `doorbell` | Emits an event when the Tuya property timestamp advances. |
-| Opened from inside | `open_inside` | Emits an event rather than presenting a persistent door-contact state. |
-| Lock alarm | `alarm_lock` | Emits an event whose event type contains the reported alarm reason. Unknown values remain valid. |
+| Doorbell | `doorbell` | Emits event type `pressed` when the Tuya property timestamp advances. |
+| Opened from inside | `open_inside` | Emits event type `opened` rather than presenting a persistent door-contact state. |
+| Lock alarm | `alarm_lock` | Emits stable event type `alarm` with the reported string in the `reason` attribute. Unknown reasons remain valid. |
 | Duress/hijack | `hijack` | Safety binary sensor. |
-| Unlocked | Integer `unlock_*` datapoints | One event entity with method-specific event types and the reported user/member identifier as an attribute. |
+| Unlocked | Supported integer `unlock_*` datapoints | One event entity with a fixed method-specific event type and the reported numeric identifier in `credential_id`. |
 
-Unlock event types cover password, fingerprint, card, face, palm/hand,
-temporary code, physical key, phone remote, dynamic code, and offline code when
-the device reports them.
+The unlocked event mapping is fixed:
+
+| Datapoint | Event type |
+| --- | --- |
+| `unlock_password` | `password` |
+| `unlock_fingerprint` | `fingerprint` |
+| `unlock_card` | `card` |
+| `unlock_face` | `face` |
+| `unlock_hand` | `palm` |
+| `unlock_temporary` | `temporary_code` |
+| `unlock_key` | `physical_key` |
+| `unlock_phone_remote` | `phone_remote` |
+| `unlock_dynamic` | `dynamic_code` |
+
+`credential_id` is permitted normalized telemetry: it contains only the
+integer reported by the corresponding supported unlock datapoint. It is useful
+for Home Assistant automations but is not resolved into a person's identity.
+Raw credential data, ticket material, and unsupported raw unlock datapoints are
+never exposed. The normalized integer can appear in the event attribute but is
+never written to logs.
 
 The first successful coordinator refresh seeds per-property timestamps without
 emitting historical events. Later refreshes emit an event only when the
@@ -130,9 +159,12 @@ separate events when the device reports a new timestamp.
    requested `open` value.
 4. If Tuya rejects the request, clear the transition state and raise a visible
    Home Assistant error without changing the confirmed lock state.
-5. If Tuya accepts the request, schedule near-term coordinator refreshes and
-   clear the transition state when the request completes.
-6. Derive the final locked state from `lock_motor_state`; do not use a fixed
+5. If Tuya accepts the request, refresh after 2, 5, and 10 seconds, stopping as
+   soon as `lock_motor_state` confirms the requested state.
+6. If the final refresh does not confirm the requested state, clear the
+   transition state, preserve the last confirmed state, and report that the
+   command was accepted by Tuya but not physically confirmed.
+7. Derive the final locked state from `lock_motor_state`; do not use a fixed
    auto-relock timer or permanently optimistic state.
 
 ## Error and Availability Behavior
