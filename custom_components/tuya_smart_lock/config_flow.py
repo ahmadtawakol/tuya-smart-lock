@@ -15,6 +15,7 @@ from .const import (
     CONF_DEVICE_ID,
     CONF_DEVICE_NAME,
     DOMAIN,
+    TUYA_IOT_PLATFORM_URL,
 )
 from .errors import (
     TuyaApiError,
@@ -76,6 +77,7 @@ class TuyaSmartLockConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 }
             ),
             errors=errors or {},
+            description_placeholders={"tuya_iot_url": TUYA_IOT_PLATFORM_URL},
         )
 
     def _show_reauth_form(

@@ -15,7 +15,7 @@ from pytest_homeassistant_custom_component.common import (
 )
 from pytest_homeassistant_custom_component.test_util.aiohttp import AiohttpClientMocker
 
-from custom_components.tuya_smart_lock import config_flow
+from custom_components.tuya_smart_lock import config_flow, const
 from custom_components.tuya_smart_lock.const import (
     CONF_ACCESS_ID,
     CONF_ACCESS_SECRET,
@@ -47,6 +47,11 @@ DEVICE = {
     "model": "",
     "product_name": "",
 }
+
+
+def test_tuya_iot_platform_url_is_canonical() -> None:
+    """The config flow links to the canonical Tuya IoT Platform URL."""
+    assert const.TUYA_IOT_PLATFORM_URL == "https://iot.tuya.com"
 
 
 def _api() -> Mock:
@@ -131,6 +136,9 @@ async def test_user_step_shows_credentials_form(hass) -> None:
     assert result["type"] is FlowResultType.FORM
     assert result["step_id"] == "user"
     assert result["errors"] == {}
+    assert result["description_placeholders"] == {
+        "tuya_iot_url": "https://iot.tuya.com"
+    }
     assert (
         result["data_schema"](
             {
@@ -369,6 +377,9 @@ async def test_credential_failure_shows_actionable_safe_error(
     assert result["type"] is FlowResultType.FORM
     assert result["step_id"] == "user"
     assert result["errors"] == {"base": flow_error}
+    assert result["description_placeholders"] == {
+        "tuya_iot_url": "https://iot.tuya.com"
+    }
     assert ACCESS_SECRET not in repr(result.get("description_placeholders"))
     assert ACCESS_SECRET not in caplog.text
     assert "raw secret detail" not in repr(result)
@@ -395,6 +406,9 @@ async def test_token_endpoint_outage_is_cannot_connect_not_invalid_auth(
     assert result["type"] is FlowResultType.FORM
     assert result["step_id"] == "user"
     assert result["errors"] == {"base": "cannot_connect"}
+    assert result["description_placeholders"] == {
+        "tuya_iot_url": "https://iot.tuya.com"
+    }
 
 
 @pytest.mark.parametrize(
@@ -423,6 +437,9 @@ async def test_discovery_failure_returns_to_user_with_actionable_safe_error(
     assert result["type"] is FlowResultType.FORM
     assert result["step_id"] == "user"
     assert result["errors"] == {"base": flow_error}
+    assert result["description_placeholders"] == {
+        "tuya_iot_url": "https://iot.tuya.com"
+    }
     assert ACCESS_SECRET not in repr(result.get("description_placeholders"))
     assert ACCESS_SECRET not in caplog.text
     assert "raw secret detail" not in repr(result)
@@ -512,6 +529,9 @@ async def test_remote_auth_failure_restarts_with_corrected_credentials(
     assert result["type"] is FlowResultType.FORM
     assert result["step_id"] == "user"
     assert result["errors"] == {"base": "invalid_auth"}
+    assert result["description_placeholders"] == {
+        "tuya_iot_url": "https://iot.tuya.com"
+    }
     assert ACCESS_SECRET not in repr(result.get("description_placeholders"))
     assert ACCESS_SECRET not in repr(result["errors"])
     assert ACCESS_SECRET not in caplog.text

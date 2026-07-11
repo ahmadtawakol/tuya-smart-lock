@@ -3,6 +3,7 @@
 from homeassistant.const import Platform
 
 DOMAIN = "tuya_smart_lock"
+TUYA_IOT_PLATFORM_URL = "https://iot.tuya.com"
 
 CONFIRMATION_DELAYS = (2, 3, 5)
 

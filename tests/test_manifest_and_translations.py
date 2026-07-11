@@ -87,6 +87,21 @@ def test_english_translation_has_exact_strings_parity() -> None:
     assert english == strings
 
 
+def test_user_description_uses_url_placeholder() -> None:
+    """The user description uses a Hassfest-compatible URL placeholder."""
+    expected = (
+        "Enter your Tuya IoT Platform credentials.\n\n"
+        "You need an active **IoT Core** and **Smart Lock Open Service** "
+        "subscription on [iot.tuya.com]({tuya_iot_url})."
+    )
+    strings = _load_json(INTEGRATION / "strings.json")
+    english = _load_json(INTEGRATION / "translations" / "en.json")
+
+    assert strings["config"]["step"]["user"]["description"] == expected
+    assert english["config"]["step"]["user"]["description"] == expected
+    assert "https://" not in expected
+
+
 def test_config_translations_retain_all_supported_flow_messages() -> None:
     """All config-flow fields, errors, and abort reasons remain translated."""
     strings = _load_json(INTEGRATION / "strings.json")
