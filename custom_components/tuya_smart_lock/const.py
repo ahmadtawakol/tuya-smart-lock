@@ -1,6 +1,15 @@
 """Constants for Tuya Smart Lock."""
 
+from homeassistant.const import Platform
+
 DOMAIN = "tuya_smart_lock"
+
+PLATFORMS = (
+    Platform.LOCK,
+    Platform.SENSOR,
+    Platform.BINARY_SENSOR,
+    Platform.EVENT,
+)
 
 CONF_ACCESS_ID = "access_id"
 CONF_ACCESS_SECRET = "access_secret"
