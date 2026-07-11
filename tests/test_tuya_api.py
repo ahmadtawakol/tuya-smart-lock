@@ -11,8 +11,10 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from pytest_homeassistant_custom_component.test_util.aiohttp import (
     AiohttpClientMocker,
+    AiohttpClientMockResponse,
 )
 
+from custom_components.tuya_smart_lock import tuya_api as tuya_api_module
 from custom_components.tuya_smart_lock.errors import (
     TuyaApiError,
     TuyaAuthenticationError,
@@ -32,6 +34,30 @@ TOKEN_URL = f"{BASE_URL}{TOKEN_PATH}"
 DEVICE_ID = "videolock-device"
 FIXED_TIME = 1_700_000_000.123
 FIXED_TIMESTAMP = "1700000000123"
+
+SUPPORTED_CODE_CASES = [
+    *(
+        (code, TuyaAuthenticationError, "Tuya authentication failed.")
+        for code in (1001, 1002, 1004, 1005, 1007, 1008, 1010, 1011, 1012, 1400)
+    ),
+    *(
+        (code, TuyaAuthorizationError, "Tuya API access is not authorized.")
+        for code in (
+            1106,
+            2406,
+            28841001,
+            28841002,
+            28841101,
+            28841102,
+            28841105,
+            28841106,
+        )
+    ),
+    *(
+        (code, TuyaRateLimitError, "Tuya API rate limit exceeded.")
+        for code in (429, 1110, 1111, 1113, 1199, 28841004, 28841104)
+    ),
+]
 
 
 def _register_token(
@@ -140,6 +166,116 @@ async def test_expired_token_is_refreshed(
     assert aioclient_mock.call_count == 2
 
 
+async def test_rejected_cached_token_is_refreshed_and_request_retried_once(
+    hass: HomeAssistant,
+    aioclient_mock: AiohttpClientMocker,
+) -> None:
+    """A server-rejected cached token is replaced before one business retry."""
+    fresh_token = "fresh-access-token"
+    issued_tokens = iter((ACCESS_TOKEN, fresh_token))
+
+    async def token_response(method, url, data):
+        return AiohttpClientMockResponse(
+            method,
+            url,
+            json={
+                "success": True,
+                "result": {
+                    "access_token": next(issued_tokens),
+                    "expire_time": 7200,
+                },
+            },
+        )
+
+    business_responses = iter(
+        (
+            {"success": False, "code": 1010, "msg": "token expired"},
+            {"success": True, "result": {"properties": []}},
+        )
+    )
+
+    async def business_response(method, url, data):
+        return AiohttpClientMockResponse(
+            method,
+            url,
+            json=next(business_responses),
+        )
+
+    aioclient_mock.get(TOKEN_URL, side_effect=token_response)
+    properties_url = (
+        f"{BASE_URL}/v2.0/cloud/thing/{DEVICE_ID}/shadow/properties"
+    )
+    aioclient_mock.get(properties_url, side_effect=business_response)
+    api = _api(hass)
+    await api.async_validate_credentials()
+
+    assert await api.async_get_properties(DEVICE_ID) == {}
+
+    assert aioclient_mock.call_count == 4
+    business_calls = [
+        call for call in aioclient_mock.mock_calls if str(call[1]) == properties_url
+    ]
+    assert [call[3]["access_token"] for call in business_calls] == [
+        ACCESS_TOKEN,
+        fresh_token,
+    ]
+
+
+async def test_rejected_token_retry_is_bounded_to_one_attempt(
+    hass: HomeAssistant,
+    aioclient_mock: AiohttpClientMocker,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A second invalid-token response is raised instead of retried again."""
+    issued_tokens = iter((ACCESS_TOKEN, "fresh-access-token"))
+
+    async def token_response(method, url, data):
+        return AiohttpClientMockResponse(
+            method,
+            url,
+            json={
+                "success": True,
+                "result": {
+                    "access_token": next(issued_tokens),
+                    "expire_time": 7200,
+                },
+            },
+        )
+
+    aioclient_mock.get(TOKEN_URL, side_effect=token_response)
+    properties_url = (
+        f"{BASE_URL}/v2.0/cloud/thing/{DEVICE_ID}/shadow/properties"
+    )
+    aioclient_mock.get(
+        properties_url,
+        json={
+            "success": False,
+            "code": 1011,
+            "msg": (
+                f"token invalid {ACCESS_TOKEN} fresh-access-token ticket-material"
+            ),
+        },
+    )
+    api = _api(hass)
+    await api.async_validate_credentials()
+
+    with caplog.at_level(logging.DEBUG), pytest.raises(
+        TuyaAuthenticationError
+    ) as error:
+        await api.async_get_properties(DEVICE_ID)
+
+    assert error.value.code == "1011"
+    assert error.value.__cause__ is None
+    assert error.value.__context__ is None
+    assert aioclient_mock.call_count == 4
+    assert sum(
+        str(call[1]) == properties_url for call in aioclient_mock.mock_calls
+    ) == 2
+    exposed = f"{error.value}\n{caplog.text}"
+    for sensitive in (ACCESS_TOKEN, "fresh-access-token", "ticket-material"):
+        assert sensitive not in exposed
+
+
 async def test_client_uses_injected_session_without_constructing_one(
     hass: HomeAssistant,
     aioclient_mock: AiohttpClientMocker,
@@ -156,6 +292,51 @@ async def test_client_uses_injected_session_without_constructing_one(
 
     client_session.assert_not_called()
     assert aioclient_mock.call_count == 1
+
+
+async def test_every_request_uses_named_bounded_timeout(
+    hass: HomeAssistant,
+    aioclient_mock: AiohttpClientMocker,
+) -> None:
+    """Token and authenticated requests use the same bounded request timeout."""
+    _register_token(aioclient_mock)
+    aioclient_mock.get(
+        f"{BASE_URL}/v2.0/cloud/thing/{DEVICE_ID}/shadow/properties",
+        json={"success": True, "result": {"properties": []}},
+    )
+    session = async_get_clientsession(hass)
+    api = TuyaCloudApi(session, ACCESS_ID, ACCESS_SECRET)
+
+    with patch.object(session, "request", wraps=session.request) as request:
+        await api.async_get_properties(DEVICE_ID)
+
+    assert request.call_count == 2
+    timeouts = [call.kwargs.get("timeout") for call in request.call_args_list]
+    assert all(isinstance(timeout, aiohttp.ClientTimeout) for timeout in timeouts)
+    assert [timeout.total for timeout in timeouts] == [12, 12]
+    assert getattr(tuya_api_module, "REQUEST_TIMEOUT_SECONDS", None) == 12
+
+
+@pytest.mark.parametrize("exception_type", [TimeoutError, aiohttp.ServerTimeoutError])
+async def test_timeout_exception_is_sanitized_without_chained_leakage(
+    hass: HomeAssistant,
+    aioclient_mock: AiohttpClientMocker,
+    caplog: pytest.LogCaptureFixture,
+    exception_type: type[BaseException],
+) -> None:
+    """Asyncio and aiohttp timeouts expose only the fixed public API error."""
+    raw_marker = f"timeout {ACCESS_SECRET} {ACCESS_TOKEN} ticket-material"
+    aioclient_mock.get(TOKEN_URL, exc=exception_type(raw_marker))
+
+    with caplog.at_level(logging.DEBUG), pytest.raises(TuyaApiError) as error:
+        await _api(hass).async_validate_credentials()
+
+    exposed = f"{error.value}\n{caplog.text}"
+    assert str(error.value) == "Unable to communicate with Tuya."
+    assert error.value.__cause__ is None
+    assert error.value.__context__ is None
+    for sensitive in (ACCESS_SECRET, ACCESS_TOKEN, "ticket-material"):
+        assert sensitive not in exposed
 
 
 async def test_token_failure_is_sanitized(
@@ -432,6 +613,28 @@ async def test_unsuccessful_responses_raise_typed_errors(
     assert error.value.code == code
 
 
+@pytest.mark.parametrize(("code", "error_type", "message"), SUPPORTED_CODE_CASES)
+async def test_supported_error_codes_are_authoritatively_classified(
+    hass: HomeAssistant,
+    aioclient_mock: AiohttpClientMocker,
+    code: int,
+    error_type: type[TuyaApiError],
+    message: str,
+) -> None:
+    """Every explicitly supported Tuya code maps to its public error category."""
+    _register_token(aioclient_mock)
+    aioclient_mock.get(
+        f"{BASE_URL}/v2.0/cloud/thing/{DEVICE_ID}/shadow/properties",
+        json={"success": False, "code": code, "msg": "opaque"},
+    )
+
+    with pytest.raises(error_type) as error:
+        await _api(hass).async_get_properties(DEVICE_ID)
+
+    assert str(error.value) == message
+    assert error.value.code == str(code)
+
+
 async def test_other_unsuccessful_response_raises_api_error(
     hass: HomeAssistant,
     aioclient_mock: AiohttpClientMocker,
@@ -516,6 +719,44 @@ async def test_invalid_json_response_body_is_sanitized(
 
     exposed = f"{error.value}\n{caplog.text}"
     assert str(error.value) == "Tuya API returned an invalid response."
+    assert error.value.__cause__ is None
+    assert error.value.__context__ is None
+    for sensitive in (ACCESS_SECRET, ACCESS_TOKEN, "ticket-material"):
+        assert sensitive not in exposed
+
+
+@pytest.mark.parametrize(
+    ("status", "error_type", "message"),
+    [
+        (401, TuyaAuthenticationError, "Tuya authentication failed."),
+        (403, TuyaAuthorizationError, "Tuya API access is not authorized."),
+        (429, TuyaRateLimitError, "Tuya API rate limit exceeded."),
+        (200, TuyaApiError, "Tuya API returned an invalid response."),
+    ],
+)
+async def test_non_json_response_preserves_http_error_classification(
+    hass: HomeAssistant,
+    aioclient_mock: AiohttpClientMocker,
+    caplog: pytest.LogCaptureFixture,
+    status: int,
+    error_type: type[TuyaApiError],
+    message: str,
+) -> None:
+    """Malformed bodies retain safe HTTP 401, 403, and 429 classification."""
+    raw_body = f"not-json {ACCESS_SECRET} {ACCESS_TOKEN} ticket-material"
+    _register_token(aioclient_mock)
+    aioclient_mock.get(
+        f"{BASE_URL}/v2.0/cloud/thing/{DEVICE_ID}/shadow/properties",
+        status=status,
+        text=raw_body,
+        headers={"Content-Type": "application/json"},
+    )
+
+    with caplog.at_level(logging.DEBUG), pytest.raises(error_type) as error:
+        await _api(hass).async_get_properties(DEVICE_ID)
+
+    exposed = f"{error.value}\n{caplog.text}"
+    assert str(error.value) == message
     assert error.value.__cause__ is None
     assert error.value.__context__ is None
     for sensitive in (ACCESS_SECRET, ACCESS_TOKEN, "ticket-material"):

@@ -29,12 +29,27 @@ from .models import TuyaProperty, properties_by_code
 TOKEN_PATH = "/v1.0/token?grant_type=1"
 DISCOVERY_PATH = "/v1.0/iot-01/associated-users/devices"
 TOKEN_EXPIRY_MARGIN_SECONDS = 60
+REQUEST_TIMEOUT_SECONDS = 12
 
 AUTHENTICATION_ERROR_CODES = frozenset(
-    {"1001", "1002", "1004", "1005", "1007", "1008", "1010", "1011", "1012"}
+    {"1001", "1002", "1004", "1005", "1007", "1008"}
 )
-AUTHORIZATION_ERROR_CODES = frozenset({"1106", "1113", "2406"})
-RATE_LIMIT_ERROR_CODES = frozenset({"429", "1110", "1111", "28841105"})
+INVALID_TOKEN_ERROR_CODES = frozenset({"1010", "1011", "1012", "1400"})
+AUTHORIZATION_ERROR_CODES = frozenset(
+    {
+        "1106",
+        "2406",
+        "28841001",
+        "28841002",
+        "28841101",
+        "28841102",
+        "28841105",
+        "28841106",
+    }
+)
+RATE_LIMIT_ERROR_CODES = frozenset(
+    {"429", "1110", "1111", "1113", "1199", "28841004", "28841104"}
+)
 
 AUTHENTICATION_MESSAGE_MARKERS = (
     "access token",
@@ -121,23 +136,33 @@ class TuyaCloudApi:
         body: str,
     ) -> tuple[Mapping[str, Any], int]:
         """Send one request and return a decoded mapping without leaking failures."""
-        error_message: str | None = None
+        network_failed = False
+        decode_failed = False
+        status = 0
+        payload: object = None
         try:
             async with self._session.request(
                 method,
                 f"{self._base_url}{path}",
                 headers=headers,
                 data=body or None,
+                timeout=aiohttp.ClientTimeout(total=REQUEST_TIMEOUT_SECONDS),
             ) as response:
                 status = response.status
                 payload = await response.json()
+        except aiohttp.ContentTypeError:
+            decode_failed = True
         except (aiohttp.ClientError, TimeoutError):
-            error_message = "Unable to communicate with Tuya."
+            network_failed = True
         except ValueError:
-            error_message = "Tuya API returned an invalid response."
+            decode_failed = True
 
-        if error_message is not None:
-            raise TuyaApiError(error_message)
+        if network_failed:
+            raise TuyaApiError("Unable to communicate with Tuya.")
+        if decode_failed:
+            if status >= 400:
+                return {}, status
+            raise TuyaApiError("Tuya API returned an invalid response.")
 
         if not isinstance(payload, Mapping):
             raise TuyaApiError("Tuya API returned an invalid response.")
@@ -175,10 +200,23 @@ class TuyaCloudApi:
         code = self._error_code(payload)
         message = payload.get("msg")
 
-        if (
-            status == 429
-            or code in RATE_LIMIT_ERROR_CODES
-            or self._message_matches(message, RATE_LIMIT_MESSAGE_MARKERS)
+        if status == 429:
+            raise TuyaRateLimitError(
+                "Tuya API rate limit exceeded.",
+                code=code,
+            )
+        if status == 401:
+            raise TuyaAuthenticationError(
+                "Tuya authentication failed.",
+                code=code,
+            )
+        if status == 403:
+            raise TuyaAuthorizationError(
+                "Tuya API access is not authorized.",
+                code=code,
+            )
+        if code in RATE_LIMIT_ERROR_CODES or self._message_matches(
+            message, RATE_LIMIT_MESSAGE_MARKERS
         ):
             raise TuyaRateLimitError(
                 "Tuya API rate limit exceeded.",
@@ -186,18 +224,16 @@ class TuyaCloudApi:
             )
         if (
             token_request
-            or status == 401
             or code in AUTHENTICATION_ERROR_CODES
+            or code in INVALID_TOKEN_ERROR_CODES
             or self._message_matches(message, AUTHENTICATION_MESSAGE_MARKERS)
         ):
             raise TuyaAuthenticationError(
                 "Tuya authentication failed.",
                 code=code,
             )
-        if (
-            status == 403
-            or code in AUTHORIZATION_ERROR_CODES
-            or self._message_matches(message, AUTHORIZATION_MESSAGE_MARKERS)
+        if code in AUTHORIZATION_ERROR_CODES or self._message_matches(
+            message, AUTHORIZATION_MESSAGE_MARKERS
         ):
             raise TuyaAuthorizationError(
                 "Tuya API access is not authorized.",
@@ -257,32 +293,42 @@ class TuyaCloudApi:
         command_request: bool = False,
     ) -> Mapping[str, Any]:
         """Make one authenticated Tuya API request."""
-        await self._ensure_token()
-        if self._token is None:
-            raise TuyaAuthenticationError("Tuya authentication failed.")
-
         body_string = (
             json.dumps(body, separators=(",", ":")) if body is not None else ""
         )
-        headers = self._signed_headers(
-            method,
-            path,
-            body_string,
-            access_token=self._token,
-        )
-        payload, status = await self._send(
-            method,
-            path,
-            headers=headers,
-            body=body_string,
-        )
-        if status >= 400 or payload.get("success") is not True:
+        for attempt in range(2):
+            await self._ensure_token()
+            if self._token is None:
+                raise TuyaAuthenticationError("Tuya authentication failed.")
+
+            headers = self._signed_headers(
+                method,
+                path,
+                body_string,
+                access_token=self._token,
+            )
+            payload, status = await self._send(
+                method,
+                path,
+                headers=headers,
+                body=body_string,
+            )
+            if status < 400 and payload.get("success") is True:
+                return payload
+            if (
+                attempt == 0
+                and self._error_code(payload) in INVALID_TOKEN_ERROR_CODES
+            ):
+                self._token = None
+                self._token_expiry = 0
+                continue
             self._raise_response_error(
                 payload,
                 status=status,
                 command_request=command_request,
             )
-        return payload
+
+        raise TuyaApiError("Tuya API request failed.")
 
     async def async_validate_credentials(self) -> None:
         """Validate credentials by acquiring or reusing an access token."""
