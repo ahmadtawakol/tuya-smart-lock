@@ -24,3 +24,7 @@ class TuyaRateLimitError(TuyaApiError):
 
 class TuyaCommandError(TuyaApiError):
     """Raised when Tuya rejects a lock command."""
+
+
+class TuyaDeviceUnavailableError(TuyaCommandError):
+    """Raised when Tuya reports that a command target is unavailable."""

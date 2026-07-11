@@ -1,5 +1,8 @@
 """Config flow for Tuya Smart Lock."""
 
+from collections.abc import Mapping
+from typing import Any
+
 import aiohttp
 import voluptuous as vol
 from homeassistant import config_entries
@@ -75,6 +78,30 @@ class TuyaSmartLockConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             errors=errors or {},
         )
 
+    def _show_reauth_form(
+        self,
+        errors: dict[str, str] | None = None,
+    ) -> config_entries.ConfigFlowResult:
+        """Show the replacement cloud-credential form."""
+        entry = self._get_reauth_entry()
+        return self.async_show_form(
+            step_id="reauth_confirm",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(
+                        CONF_ACCESS_ID,
+                        default=entry.data[CONF_ACCESS_ID],
+                    ): str,
+                    vol.Required(CONF_ACCESS_SECRET): str,
+                    vol.Required(
+                        CONF_API_REGION,
+                        default=entry.data[CONF_API_REGION],
+                    ): vol.In(REGIONS),
+                }
+            ),
+            errors=errors or {},
+        )
+
     async def async_step_user(self, user_input: dict | None = None):
         """Step 1: Collect Tuya Cloud credentials."""
         if user_input is not None:
@@ -95,6 +122,37 @@ class TuyaSmartLockConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             return await self.async_step_select_device()
 
         return self._show_user_form()
+
+    async def async_step_reauth(
+        self,
+        entry_data: Mapping[str, Any],
+    ) -> config_entries.ConfigFlowResult:
+        """Start reauthentication after Home Assistant reports invalid auth."""
+        return await self.async_step_reauth_confirm()
+
+    async def async_step_reauth_confirm(
+        self,
+        user_input: dict[str, Any] | None = None,
+    ) -> config_entries.ConfigFlowResult:
+        """Validate replacement credentials and reload the existing entry."""
+        if user_input is not None:
+            api = TuyaCloudApi(
+                async_get_clientsession(self.hass),
+                access_id=user_input[CONF_ACCESS_ID],
+                access_secret=user_input[CONF_ACCESS_SECRET],
+                region=user_input[CONF_API_REGION],
+            )
+            try:
+                await api.async_validate_credentials()
+            except _FLOW_EXCEPTIONS as error:
+                return self._show_reauth_form({"base": _flow_error(error)})
+
+            return self.async_update_reload_and_abort(
+                self._get_reauth_entry(),
+                data_updates=user_input,
+            )
+
+        return self._show_reauth_form()
 
     async def async_step_select_device(self, user_input: dict | None = None):
         """Step 2: Discover and select a lock device."""

@@ -1,7 +1,9 @@
 """Tests for the Tuya Smart Lock lock platform."""
 
 import asyncio
+import json
 from importlib import import_module
+from pathlib import Path
 from unittest.mock import AsyncMock, Mock, call, patch
 
 import pytest
@@ -33,6 +35,7 @@ from custom_components.tuya_smart_lock.errors import (
     TuyaAuthenticationError,
     TuyaAuthorizationError,
     TuyaCommandError,
+    TuyaDeviceUnavailableError,
     TuyaRateLimitError,
 )
 from custom_components.tuya_smart_lock.lock import (
@@ -445,13 +448,20 @@ async def test_confirmation_refreshes_at_cumulative_two_five_and_ten_seconds(
         "custom_components.tuya_smart_lock.lock.async_sleep",
         new=AsyncMock(),
     ) as sleep:
-        with pytest.raises(
-            HomeAssistantError,
-            match="^Tuya accepted the lock command but the physical state "
-            "was not confirmed[.]$",
-        ):
+        with pytest.raises(HomeAssistantError) as exc_info:
             await entity.async_unlock()
 
+    assert exc_info.value.translation_domain == DOMAIN
+    assert exc_info.value.translation_key == "command_confirmation_timeout"
+    assert exc_info.value.generate_message is True
+    strings = json.loads(
+        (
+            Path(__file__).parents[1] / "custom_components" / DOMAIN / "strings.json"
+        ).read_text()
+    )
+    assert strings["exceptions"]["command_confirmation_timeout"]["message"] == (
+        "Tuya accepted the lock command but the physical state was not confirmed."
+    )
     assert sleep.await_args_list == [call(2), call(3), call(5)]
     assert api.async_get_properties.await_count == 3
     assert entity.is_locked is True
@@ -497,38 +507,89 @@ async def test_non_boolean_matching_value_does_not_confirm(hass) -> None:
 
 
 @pytest.mark.parametrize(
-    "error",
+    ("error", "translation_key", "message", "starts_reauth"),
     [
-        TuyaAuthenticationError("secret-token property-value"),
-        TuyaAuthorizationError("secret-token property-value"),
-        TuyaRateLimitError("secret-token property-value"),
-        TuyaCommandError("secret-token property-value"),
-        TuyaApiError("secret-token property-value"),
+        (
+            TuyaAuthenticationError("secret-token property-value"),
+            "command_authentication_failed",
+            "Tuya Cloud authentication failed. Reauthentication has been requested.",
+            True,
+        ),
+        (
+            TuyaAuthorizationError("secret-token property-value"),
+            "command_not_authorized",
+            "Tuya Cloud is not authorized to operate this lock.",
+            False,
+        ),
+        (
+            TuyaRateLimitError("secret-token property-value"),
+            "command_rate_limited",
+            "Tuya Cloud is temporarily rate limited. Try again later.",
+            False,
+        ),
+        (
+            TuyaDeviceUnavailableError("secret-token property-value"),
+            "command_device_unavailable",
+            "The Tuya smart lock is offline or unavailable.",
+            False,
+        ),
+        (
+            TuyaCommandError("secret-token property-value"),
+            "command_rejected",
+            "Tuya rejected the smart lock command.",
+            False,
+        ),
+        (
+            TuyaApiError("secret-token property-value"),
+            "command_connection_failed",
+            "Unable to communicate with Tuya Cloud.",
+            False,
+        ),
     ],
-    ids=["authentication", "authorization", "rate-limit", "command", "api"],
+    ids=[
+        "authentication",
+        "authorization",
+        "rate-limit",
+        "device-unavailable",
+        "command-rejected",
+        "api-connectivity",
+    ],
 )
-async def test_api_errors_are_sanitized_and_preserve_confirmed_state(
+async def test_api_errors_are_typed_translated_safe_and_preserve_confirmed_state(
     hass,
     error: TuyaApiError,
+    translation_key: str,
+    message: str,
+    starts_reauth: bool,
 ) -> None:
-    """Typed command failures become a fixed safe Home Assistant error."""
+    """Each command category has fixed translated UI behavior without leakage."""
     api = AsyncMock()
     api.async_operate_lock.side_effect = error
     initial = _motor_property(False)
     entity = _entity(hass, api, initial)
+    entry = entity.coordinator.config_entry
 
     with (
+        patch.object(entry, "async_start_reauth") as start_reauth,
         patch(
             "custom_components.tuya_smart_lock.lock.async_sleep",
             new=AsyncMock(),
         ) as sleep,
-        pytest.raises(
-            HomeAssistantError,
-            match="^Unable to operate the Tuya smart lock[.]$",
-        ) as exc_info,
+        pytest.raises(HomeAssistantError) as exc_info,
     ):
         await entity.async_unlock()
 
+    assert exc_info.value.translation_domain == DOMAIN
+    assert exc_info.value.translation_key == translation_key
+    assert exc_info.value.translation_placeholders is None
+    assert exc_info.value.generate_message is True
+    assert exc_info.value.args == (translation_key,)
+    strings = json.loads(
+        (
+            Path(__file__).parents[1] / "custom_components" / DOMAIN / "strings.json"
+        ).read_text()
+    )
+    assert strings["exceptions"][translation_key]["message"] == message
     assert exc_info.value.__cause__ is None
     assert exc_info.value.__suppress_context__ is True
     assert "secret-token" not in str(exc_info.value)
@@ -538,6 +599,10 @@ async def test_api_errors_are_sanitized_and_preserve_confirmed_state(
     assert entity.is_unlocking is False
     api.async_get_properties.assert_not_awaited()
     sleep.assert_not_awaited()
+    if starts_reauth:
+        start_reauth.assert_called_once_with(hass)
+    else:
+        start_reauth.assert_not_called()
 
 
 async def test_failed_refresh_cannot_confirm_from_retained_matching_data(

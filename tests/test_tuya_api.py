@@ -1,5 +1,6 @@
 """Tests for the shared-session Tuya Cloud API client."""
 
+import asyncio
 import hashlib
 import hmac
 import logging
@@ -14,12 +15,14 @@ from pytest_homeassistant_custom_component.test_util.aiohttp import (
     AiohttpClientMockResponse,
 )
 
+from custom_components.tuya_smart_lock import errors as errors_module
 from custom_components.tuya_smart_lock import tuya_api as tuya_api_module
 from custom_components.tuya_smart_lock.errors import (
     TuyaApiError,
     TuyaAuthenticationError,
     TuyaAuthorizationError,
     TuyaCommandError,
+    TuyaDeviceUnavailableError,
     TuyaRateLimitError,
 )
 from custom_components.tuya_smart_lock.models import TuyaProperty
@@ -61,6 +64,15 @@ SUPPORTED_CODE_CASES = [
         for code in (429, 1110, 1111, 1113, 1199, 28841004, 28841104)
     ),
 ]
+
+
+def test_device_unavailable_error_is_a_safe_api_category() -> None:
+    """Command callers can distinguish an unavailable device safely."""
+    error_type = getattr(errors_module, "TuyaDeviceUnavailableError", None)
+
+    assert isinstance(error_type, type)
+    assert issubclass(error_type, TuyaApiError)
+    assert issubclass(error_type, TuyaCommandError)
 
 
 def _register_token(
@@ -171,6 +183,97 @@ async def test_expired_token_is_refreshed(
     await api.async_validate_credentials()
 
     assert aioclient_mock.call_count == 2
+
+
+async def test_concurrent_token_expiry_performs_one_refresh(
+    hass: HomeAssistant,
+) -> None:
+    """Concurrent callers share a single in-flight token refresh."""
+    api = _api(hass)
+    refresh_started = asyncio.Event()
+    release_refresh = asyncio.Event()
+    token_calls = 0
+
+    async def send(method, path, *, headers, body):
+        nonlocal token_calls
+        assert method == "GET"
+        assert path == TOKEN_PATH
+        token_calls += 1
+        refresh_started.set()
+        await release_refresh.wait()
+        return (
+            {
+                "success": True,
+                "result": {"access_token": ACCESS_TOKEN, "expire_time": 7200},
+            },
+            200,
+        )
+
+    with patch.object(api, "_send", side_effect=send):
+        first = asyncio.create_task(api.async_validate_credentials())
+        await refresh_started.wait()
+        second = asyncio.create_task(api.async_validate_credentials())
+        try:
+            for _ in range(10):
+                await asyncio.sleep(0)
+            assert token_calls == 1
+        finally:
+            release_refresh.set()
+            await asyncio.gather(first, second)
+
+    assert api._token == ACCESS_TOKEN
+
+
+async def test_late_invalid_old_token_does_not_clear_new_token(
+    hass: HomeAssistant,
+) -> None:
+    """A late old-token rejection cannot evict a newer cached token."""
+    api = _api(hass)
+    old_token = "old-access-token"
+    fresh_token = "fresh-access-token"
+    api._token = old_token
+    api._token_expiry = float("inf")
+    first_old_request_started = asyncio.Event()
+    release_first_old_response = asyncio.Event()
+    old_request_count = 0
+    token_calls = 0
+    signed_tokens: list[str] = []
+
+    async def send(method, path, *, headers, body):
+        nonlocal old_request_count, token_calls
+        if path == TOKEN_PATH:
+            token_calls += 1
+            return (
+                {
+                    "success": True,
+                    "result": {"access_token": fresh_token, "expire_time": 7200},
+                },
+                200,
+            )
+
+        request_token = headers["access_token"]
+        signed_tokens.append(request_token)
+        if request_token == old_token:
+            old_request_count += 1
+            if old_request_count == 1:
+                first_old_request_started.set()
+                await release_first_old_response.wait()
+            return {"success": False, "code": 1010, "msg": "token expired"}, 200
+        assert request_token == fresh_token
+        return {"success": True, "result": {"properties": []}}, 200
+
+    with patch.object(api, "_send", side_effect=send):
+        late_request = asyncio.create_task(api.async_get_properties(DEVICE_ID))
+        await first_old_request_started.wait()
+        refreshing_request = asyncio.create_task(api.async_get_properties(DEVICE_ID))
+        await refreshing_request
+        assert api._token == fresh_token
+        release_first_old_response.set()
+        await late_request
+
+    assert token_calls == 1
+    assert api._token == fresh_token
+    assert signed_tokens == [old_token, old_token, fresh_token, fresh_token]
 
 
 async def test_rejected_cached_token_is_refreshed_and_request_retried_once(
@@ -492,6 +595,63 @@ async def test_token_rate_limit_raises_rate_limit_error(
     assert error.value.code == "429"
 
 
+@pytest.mark.parametrize("status", [500, 503])
+async def test_token_http_server_error_raises_api_error(
+    hass: HomeAssistant,
+    aioclient_mock: AiohttpClientMocker,
+    status: int,
+) -> None:
+    """Token endpoint outages are connectivity failures, not bad credentials."""
+    aioclient_mock.get(
+        TOKEN_URL,
+        status=status,
+        json={"success": False, "code": status, "msg": "raw outage detail"},
+    )
+
+    with pytest.raises(TuyaApiError) as error:
+        await _api(hass).async_validate_credentials()
+
+    assert type(error.value) is TuyaApiError
+    assert str(error.value) == "Tuya API request failed."
+    assert error.value.code == str(status)
+
+
+async def test_non_json_token_http_server_error_raises_api_error(
+    hass: HomeAssistant,
+    aioclient_mock: AiohttpClientMocker,
+) -> None:
+    """An undecodable token outage cannot be misreported as invalid auth."""
+    aioclient_mock.get(
+        TOKEN_URL,
+        status=502,
+        text=f"raw outage {ACCESS_SECRET} {ACCESS_TOKEN}",
+    )
+
+    with pytest.raises(TuyaApiError) as error:
+        await _api(hass).async_validate_credentials()
+
+    assert type(error.value) is TuyaApiError
+    assert str(error.value) == "Tuya API request failed."
+    assert error.value.code is None
+
+
+async def test_token_explicit_system_failure_raises_api_error(
+    hass: HomeAssistant,
+    aioclient_mock: AiohttpClientMocker,
+) -> None:
+    """A Tuya system failure in a 200 response remains transient."""
+    aioclient_mock.get(
+        TOKEN_URL,
+        json={"success": False, "code": 500, "msg": "system error"},
+    )
+
+    with pytest.raises(TuyaApiError) as error:
+        await _api(hass).async_validate_credentials()
+
+    assert type(error.value) is TuyaApiError
+    assert error.value.code == "500"
+
+
 async def test_get_properties_uses_shadow_endpoint_and_normalizes_result(
     hass: HomeAssistant,
     aioclient_mock: AiohttpClientMocker,
@@ -651,6 +811,37 @@ async def test_command_rejection_raises_sanitized_command_error(
         assert sensitive not in exposed
 
 
+@pytest.mark.parametrize("code", [2001, 40000801])
+async def test_offline_command_codes_raise_device_unavailable_error(
+    hass: HomeAssistant,
+    aioclient_mock: AiohttpClientMocker,
+    caplog: pytest.LogCaptureFixture,
+    code: int,
+) -> None:
+    """Documented offline codes use the safe device-unavailable category."""
+    raw_marker = f"offline {ACCESS_SECRET} {ACCESS_TOKEN} ticket-material"
+    _register_token(aioclient_mock)
+    aioclient_mock.post(
+        f"{BASE_URL}/v1.0/devices/{DEVICE_ID}/door-lock/password-ticket",
+        json={"success": True, "result": {"ticket_id": "ticket-material"}},
+    )
+    aioclient_mock.post(
+        f"{BASE_URL}/v1.0/smart-lock/devices/{DEVICE_ID}/password-free/door-operate",
+        json={"success": False, "code": code, "msg": raw_marker},
+    )
+
+    with (
+        caplog.at_level(logging.DEBUG),
+        pytest.raises(TuyaDeviceUnavailableError) as error,
+    ):
+        await _api(hass).async_operate_lock(DEVICE_ID, open_=True)
+
+    assert str(error.value) == "Tuya lock device is unavailable."
+    assert error.value.code == str(code)
+    assert raw_marker not in caplog.text
+    assert ACCESS_SECRET not in str(error.value)
+
+
 @pytest.mark.parametrize(
     ("response", "error_type", "message", "code"),
     [
@@ -749,6 +940,24 @@ async def test_other_unsuccessful_response_raises_api_error(
     assert type(error.value) is TuyaApiError
     assert str(error.value) == "Tuya API request failed."
     assert error.value.code == "500"
+
+
+async def test_unknown_code_cannot_be_promoted_to_auth_by_raw_message(
+    hass: HomeAssistant,
+    aioclient_mock: AiohttpClientMocker,
+) -> None:
+    """Only authoritative codes or statuses can invalidate credentials."""
+    _register_token(aioclient_mock)
+    aioclient_mock.get(
+        f"{BASE_URL}/v2.0/cloud/thing/{DEVICE_ID}/shadow/properties",
+        json={"success": False, "code": 2999, "msg": "token invalid raw detail"},
+    )
+
+    with pytest.raises(TuyaApiError) as error:
+        await _api(hass).async_get_properties(DEVICE_ID)
+
+    assert type(error.value) is TuyaApiError
+    assert error.value.code == "2999"
 
 
 async def test_non_numeric_error_code_is_not_exposed(

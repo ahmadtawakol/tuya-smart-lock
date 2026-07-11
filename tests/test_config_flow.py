@@ -13,6 +13,7 @@ from pytest_homeassistant_custom_component.common import (
     MockConfigEntry,
     mock_platform,
 )
+from pytest_homeassistant_custom_component.test_util.aiohttp import AiohttpClientMocker
 
 from custom_components.tuya_smart_lock import config_flow
 from custom_components.tuya_smart_lock.const import (
@@ -57,6 +58,21 @@ def _api() -> Mock:
     return api
 
 
+def _reauth_entry() -> MockConfigEntry:
+    """Return an existing uniquely identified lock entry for reauthentication."""
+    return MockConfigEntry(
+        domain=DOMAIN,
+        entry_id="entry-123",
+        unique_id=DEVICE_ID,
+        title=DEVICE_NAME,
+        data={
+            **CREDENTIALS,
+            CONF_DEVICE_ID: DEVICE_ID,
+            CONF_DEVICE_NAME: DEVICE_NAME,
+        },
+    )
+
+
 async def _start_flow(hass):
     """Start the user config flow."""
     mock_platform(
@@ -68,6 +84,22 @@ async def _start_flow(hass):
     return await hass.config_entries.flow.async_init(
         DOMAIN,
         context={"source": "user"},
+    )
+
+
+async def _start_reauth_flow(hass, entry: MockConfigEntry):
+    """Start reauthentication for an existing entry."""
+    mock_platform(
+        hass,
+        f"{DOMAIN}.config_flow",
+        config_flow,
+        built_in=False,
+    )
+    entry.add_to_hass(hass)
+    return await hass.config_entries.flow.async_init(
+        DOMAIN,
+        context={"source": "reauth", "entry_id": entry.entry_id},
+        data=dict(entry.data),
     )
 
 
@@ -108,6 +140,125 @@ async def test_user_step_shows_credentials_form(hass) -> None:
         )
         == CREDENTIALS
     )
+
+
+async def test_reauth_step_shows_credentials_without_device_field(hass) -> None:
+    """Reauth can replace cloud credentials and region, but never the lock."""
+    entry = _reauth_entry()
+
+    result = await _start_reauth_flow(hass, entry)
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "reauth_confirm"
+    assert result["errors"] == {}
+    assert result["data_schema"](
+        {
+            CONF_ACCESS_ID: "replacement-id",
+            CONF_ACCESS_SECRET: "replacement-secret",
+            CONF_API_REGION: "us",
+        }
+    ) == {
+        CONF_ACCESS_ID: "replacement-id",
+        CONF_ACCESS_SECRET: "replacement-secret",
+        CONF_API_REGION: "us",
+    }
+    with pytest.raises(vol.Invalid):
+        result["data_schema"](
+            {
+                CONF_ACCESS_ID: "replacement-id",
+                CONF_ACCESS_SECRET: "replacement-secret",
+                CONF_API_REGION: "us",
+                CONF_DEVICE_ID: "different-device",
+            }
+        )
+
+
+@pytest.mark.parametrize(
+    ("error", "flow_error"),
+    [
+        (TuyaAuthenticationError("raw auth secret"), "invalid_auth"),
+        (TuyaApiError("raw transient secret"), "cannot_connect"),
+    ],
+    ids=["invalid-auth", "transient-connectivity"],
+)
+async def test_reauth_failure_stays_on_safe_form(
+    hass,
+    caplog,
+    error: TuyaApiError,
+    flow_error: str,
+) -> None:
+    """Reauth distinguishes invalid credentials from transient connectivity."""
+    entry = _reauth_entry()
+    api = _api()
+    api.async_validate_credentials.side_effect = error
+    form = await _start_reauth_flow(hass, entry)
+    replacement = {
+        CONF_ACCESS_ID: "replacement-id",
+        CONF_ACCESS_SECRET: "replacement-secret",
+        CONF_API_REGION: "us",
+    }
+
+    with patch(
+        "custom_components.tuya_smart_lock.config_flow.TuyaCloudApi",
+        return_value=api,
+    ):
+        result = await hass.config_entries.flow.async_configure(
+            form["flow_id"], user_input=replacement
+        )
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "reauth_confirm"
+    assert result["errors"] == {"base": flow_error}
+    assert dict(entry.data) == {
+        **CREDENTIALS,
+        CONF_DEVICE_ID: DEVICE_ID,
+        CONF_DEVICE_NAME: DEVICE_NAME,
+    }
+    assert entry.unique_id == DEVICE_ID
+    assert "raw auth secret" not in repr(result)
+    assert "raw transient secret" not in repr(result)
+    assert "raw auth secret" not in caplog.text
+    assert "raw transient secret" not in caplog.text
+
+
+async def test_successful_reauth_updates_credentials_reloads_and_preserves_identity(
+    hass,
+) -> None:
+    """Successful reauth updates only replaceable data and reloads the entry."""
+    entry = _reauth_entry()
+    api = _api()
+    form = await _start_reauth_flow(hass, entry)
+    replacement = {
+        CONF_ACCESS_ID: "replacement-id",
+        CONF_ACCESS_SECRET: "replacement-secret",
+        CONF_API_REGION: "us",
+    }
+
+    with (
+        patch(
+            "custom_components.tuya_smart_lock.config_flow.TuyaCloudApi",
+            return_value=api,
+        ) as api_class,
+        patch.object(hass.config_entries, "async_schedule_reload") as reload_entry,
+    ):
+        result = await hass.config_entries.flow.async_configure(
+            form["flow_id"], user_input=replacement
+        )
+
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "reauth_successful"
+    assert dict(entry.data) == {
+        **replacement,
+        CONF_DEVICE_ID: DEVICE_ID,
+        CONF_DEVICE_NAME: DEVICE_NAME,
+    }
+    assert entry.unique_id == DEVICE_ID
+    assert entry.title == DEVICE_NAME
+    api_class.assert_called_once()
+    api.async_validate_credentials.assert_awaited_once_with()
+    api.async_discover_devices.assert_not_awaited()
+    api.async_check_remote_unlock.assert_not_awaited()
+    reload_entry.assert_called_once_with(entry.entry_id)
 
 
 async def test_valid_credentials_discover_and_configure_selected_lock(
@@ -205,6 +356,28 @@ async def test_credential_failure_shows_actionable_safe_error(
     assert ACCESS_SECRET not in caplog.text
     assert "raw secret detail" not in repr(result)
     assert "raw secret detail" not in caplog.text
+
+
+async def test_token_endpoint_outage_is_cannot_connect_not_invalid_auth(
+    hass,
+    aioclient_mock: AiohttpClientMocker,
+) -> None:
+    """A token-service HTTP 503 stays a transient config-flow failure."""
+    aioclient_mock.get(
+        "https://openapi.tuyaeu.com/v1.0/token?grant_type=1",
+        status=503,
+        json={"success": False, "code": 503, "msg": "raw outage detail"},
+    )
+    initial = await _start_flow(hass)
+
+    result = await hass.config_entries.flow.async_configure(
+        initial["flow_id"],
+        user_input=CREDENTIALS,
+    )
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "user"
+    assert result["errors"] == {"base": "cannot_connect"}
 
 
 @pytest.mark.parametrize(

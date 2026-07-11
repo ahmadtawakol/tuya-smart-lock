@@ -92,13 +92,18 @@ def test_config_translations_retain_all_supported_flow_messages() -> None:
     strings = _load_json(INTEGRATION / "strings.json")
     config = strings["config"]
 
-    assert set(config["step"]) == {"user", "select_device"}
+    assert set(config["step"]) == {"user", "select_device", "reauth_confirm"}
     assert set(config["step"]["user"]["data"]) == {
         "access_id",
         "access_secret",
         "api_region",
     }
     assert set(config["step"]["select_device"]["data"]) == {"device_id"}
+    assert set(config["step"]["reauth_confirm"]["data"]) == {
+        "access_id",
+        "access_secret",
+        "api_region",
+    }
     assert set(config["error"]) == {
         "invalid_auth",
         "service_not_authorized",
@@ -106,7 +111,11 @@ def test_config_translations_retain_all_supported_flow_messages() -> None:
         "cannot_connect",
         "remote_unlock_disabled",
     }
-    assert set(config["abort"]) == {"already_configured", "no_devices_found"}
+    assert set(config["abort"]) == {
+        "already_configured",
+        "no_devices_found",
+        "reauth_successful",
+    }
 
 
 def test_entity_translations_are_complete_and_used_by_production_classes() -> None:
@@ -142,3 +151,35 @@ def test_entity_translations_are_complete_and_used_by_production_classes() -> No
         for translation_key, entity_class in classes.items():
             assert entity_class.__dict__["__attr_translation_key"] == translation_key
             assert "_attr_name" not in entity_class.__dict__
+
+
+def test_command_exception_translations_are_complete_and_fixed() -> None:
+    """Every command failure category has a fixed public translation."""
+    strings = _load_json(INTEGRATION / "strings.json")
+
+    assert strings["exceptions"] == {
+        "command_authentication_failed": {
+            "message": (
+                "Tuya Cloud authentication failed. Reauthentication has been requested."
+            )
+        },
+        "command_not_authorized": {
+            "message": "Tuya Cloud is not authorized to operate this lock."
+        },
+        "command_rate_limited": {
+            "message": "Tuya Cloud is temporarily rate limited. Try again later."
+        },
+        "command_device_unavailable": {
+            "message": "The Tuya smart lock is offline or unavailable."
+        },
+        "command_rejected": {"message": "Tuya rejected the smart lock command."},
+        "command_connection_failed": {
+            "message": "Unable to communicate with Tuya Cloud."
+        },
+        "command_confirmation_timeout": {
+            "message": (
+                "Tuya accepted the lock command but the physical state "
+                "was not confirmed."
+            )
+        },
+    }

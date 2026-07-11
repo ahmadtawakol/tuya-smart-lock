@@ -5,8 +5,10 @@ from unittest.mock import AsyncMock
 
 import pytest
 from homeassistant.exceptions import ConfigEntryAuthFailed
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.update_coordinator import UpdateFailed
 from pytest_homeassistant_custom_component.common import MockConfigEntry
+from pytest_homeassistant_custom_component.test_util.aiohttp import AiohttpClientMocker
 
 from custom_components.tuya_smart_lock.const import DOMAIN
 from custom_components.tuya_smart_lock.coordinator import TuyaSmartLockCoordinator
@@ -18,6 +20,7 @@ from custom_components.tuya_smart_lock.errors import (
     TuyaRateLimitError,
 )
 from custom_components.tuya_smart_lock.models import TuyaProperty
+from custom_components.tuya_smart_lock.tuya_api import TuyaCloudApi
 
 DEVICE_ID = "device-123"
 
@@ -72,6 +75,23 @@ async def test_authentication_error_is_sanitized(hass) -> None:
     assert exc_info.value.__suppress_context__ is True
     assert "secret-token" not in str(exc_info.value)
     assert "property-value" not in str(exc_info.value)
+
+
+async def test_non_json_token_outage_is_update_failed_not_auth_failed(
+    hass,
+    aioclient_mock: AiohttpClientMocker,
+) -> None:
+    """Polling maps a token-service outage to an ordinary update failure."""
+    aioclient_mock.get(
+        "https://openapi.tuyaeu.com/v1.0/token?grant_type=1",
+        status=502,
+        text="raw outage detail",
+    )
+    api = TuyaCloudApi(async_get_clientsession(hass), "id", "secret")
+    coordinator = _coordinator(hass, api)
+
+    with pytest.raises(UpdateFailed, match="^Unable to update Tuya device data[.]$"):
+        await coordinator._async_update_data()
 
 
 @pytest.mark.parametrize(

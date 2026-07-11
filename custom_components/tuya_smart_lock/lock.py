@@ -14,12 +14,22 @@ from . import TuyaSmartLockRuntimeData
 from .const import CONFIRMATION_DELAYS, DOMAIN
 from .coordinator import TuyaSmartLockCoordinator
 from .entity import TuyaSmartLockEntity
-from .errors import TuyaApiError
-
-COMMAND_ERROR = "Unable to operate the Tuya smart lock."
-CONFIRMATION_ERROR = (
-    "Tuya accepted the lock command but the physical state was not confirmed."
+from .errors import (
+    TuyaApiError,
+    TuyaAuthenticationError,
+    TuyaAuthorizationError,
+    TuyaCommandError,
+    TuyaDeviceUnavailableError,
+    TuyaRateLimitError,
 )
+
+
+def _translated_error(translation_key: str) -> HomeAssistantError:
+    """Return a fixed, translation-backed Home Assistant error."""
+    return HomeAssistantError(
+        translation_domain=DOMAIN,
+        translation_key=translation_key,
+    )
 
 
 async def async_setup_entry(
@@ -118,8 +128,21 @@ class TuyaSmartLock(TuyaSmartLockEntity, LockEntity):
                         self._device_id,
                         open_=open_,
                     )
+                except TuyaAuthenticationError:
+                    self.coordinator.config_entry.async_start_reauth(
+                        self.coordinator.hass
+                    )
+                    raise _translated_error("command_authentication_failed") from None
+                except TuyaAuthorizationError:
+                    raise _translated_error("command_not_authorized") from None
+                except TuyaRateLimitError:
+                    raise _translated_error("command_rate_limited") from None
+                except TuyaDeviceUnavailableError:
+                    raise _translated_error("command_device_unavailable") from None
+                except TuyaCommandError:
+                    raise _translated_error("command_rejected") from None
                 except TuyaApiError:
-                    raise HomeAssistantError(COMMAND_ERROR) from None
+                    raise _translated_error("command_connection_failed") from None
 
                 for delay in CONFIRMATION_DELAYS:
                     await async_sleep(delay)
@@ -130,7 +153,7 @@ class TuyaSmartLock(TuyaSmartLockEntity, LockEntity):
                     ):
                         return
 
-                raise HomeAssistantError(CONFIRMATION_ERROR)
+                raise _translated_error("command_confirmation_timeout")
             finally:
                 self._attr_is_locking = False
                 self._attr_is_unlocking = False
