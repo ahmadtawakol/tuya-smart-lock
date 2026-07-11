@@ -119,7 +119,7 @@ Open Service, enable remote control, and select the matching data center.
 | --- | --- | --- |
 | Lock | `lock_motor_state` | `true` is unlocked and `false` is locked; supports lock and unlock commands. |
 | Battery | `battery_percentage`, falling back to `residual_electricity` | Percentage sensor using whichever alias the endpoint returns. |
-| Doorbell | `doorbell` | Emits event type `pressed` when the Tuya property timestamp advances. |
+| Doorbell | `doorbell` | Emits Home Assistant's standard doorbell event type `ring` when the Tuya property timestamp advances. |
 | Opened from inside | `open_inside` | Emits event type `opened` rather than presenting a persistent door-contact state. |
 | Lock alarm | `alarm_lock` | Emits stable event type `alarm` with the reported string in the `reason` attribute. Unknown reasons remain valid. |
 | Duress/hijack | `hijack` | Safety binary sensor. |
