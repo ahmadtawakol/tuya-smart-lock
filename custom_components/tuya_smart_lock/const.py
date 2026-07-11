@@ -4,6 +4,8 @@ from homeassistant.const import Platform
 
 DOMAIN = "tuya_smart_lock"
 
+CONFIRMATION_DELAYS = (2, 3, 5)
+
 PLATFORMS = (
     Platform.LOCK,
     Platform.SENSOR,
