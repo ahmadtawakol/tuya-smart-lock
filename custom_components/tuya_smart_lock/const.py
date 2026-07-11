@@ -44,3 +44,15 @@ DOOR_OPERATE_ENDPOINT = (
 )
 SHADOW_PROPERTIES_ENDPOINT = "/v2.0/cloud/thing/{device_id}/shadow/properties"
 REMOTE_UNLOCKS_ENDPOINT = "/v1.0/devices/{device_id}/door-lock/remote-unlocks"
+
+UNLOCK_EVENT_TYPES_BY_CODE = {
+    "unlock_password": "password",
+    "unlock_fingerprint": "fingerprint",
+    "unlock_card": "card",
+    "unlock_face": "face",
+    "unlock_hand": "palm",
+    "unlock_temporary": "temporary_code",
+    "unlock_key": "physical_key",
+    "unlock_phone_remote": "phone_remote",
+    "unlock_dynamic": "dynamic_code",
+}

@@ -163,7 +163,7 @@ async def test_integration_setup_forwards_coordinator_backed_platforms(
     ):
         assert await async_setup_integration(hass, entry) is True
 
-    assert len(entities) == 3
+    assert len(entities) == 7
     assert isinstance(entities[0], TuyaSmartLock)
     assert isinstance(entities[1], TuyaSmartLockBatterySensor)
     assert isinstance(entities[2], TuyaSmartLockHijackBinarySensor)
