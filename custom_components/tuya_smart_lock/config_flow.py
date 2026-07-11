@@ -111,16 +111,21 @@ class TuyaSmartLockConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     device_name = device["name"]
                     break
 
+            await self.async_set_unique_id(device_id)
+            self._abort_if_unique_id_configured()
+
             # Check remote unlock is enabled
             try:
                 remote_ok = await self._api.async_check_remote_unlock(device_id)
+            except TuyaAuthenticationError:
+                self._api = None
+                self._credentials = {}
+                self._discovered_devices = []
+                return self._show_user_form({"base": "invalid_auth"})
             except _FLOW_EXCEPTIONS as error:
                 errors["base"] = _flow_error(error)
             else:
                 if remote_ok:
-                    await self.async_set_unique_id(device_id)
-                    self._abort_if_unique_id_configured()
-
                     return self.async_create_entry(
                         title=device_name,
                         data={
