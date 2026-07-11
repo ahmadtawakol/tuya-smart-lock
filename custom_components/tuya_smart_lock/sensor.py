@@ -18,6 +18,18 @@ from .coordinator import TuyaSmartLockCoordinator
 from .entity import TuyaSmartLockEntity
 
 
+def _valid_battery_value(value: object) -> int | float | None:
+    """Return a finite numeric value that HA can safely represent."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    try:
+        if not isfinite(value):
+            return None
+    except OverflowError:
+        return None
+    return value
+
+
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: ConfigEntry,
@@ -66,11 +78,6 @@ class TuyaSmartLockBatterySensor(TuyaSmartLockEntity, SensorEntity):
             prop = self.coordinator.data.get(code)
             if prop is None:
                 continue
-            value = prop.value
-            if isinstance(value, bool):
-                continue
-            if isinstance(value, int):
-                return value
-            if isinstance(value, float) and isfinite(value):
+            if (value := _valid_battery_value(prop.value)) is not None:
                 return value
         return None

@@ -125,6 +125,22 @@ def test_invalid_primary_uses_valid_residual_electricity(
     assert entity.native_value == 47.5
 
 
+def test_unrepresentable_primary_uses_valid_fallback_without_state_error(
+    hass,
+) -> None:
+    """A huge primary integer cannot break HA state or block the fallback."""
+    entity = _entity(
+        hass,
+        {
+            "battery_percentage": _property("battery_percentage", 10**400),
+            "residual_electricity": _property("residual_electricity", 38),
+        },
+    )
+
+    assert entity.state == 38
+    assert entity.native_value == 38
+
+
 @pytest.mark.parametrize(
     "invalid_fallback",
     [True, False, "47", None, float("inf"), float("nan")],
@@ -139,6 +155,22 @@ def test_invalid_residual_electricity_is_unknown(
         {"residual_electricity": _property("residual_electricity", invalid_fallback)},
     )
 
+    assert entity.native_value is None
+
+
+def test_unrepresentable_fallback_is_unknown_without_state_error(hass) -> None:
+    """A huge fallback integer produces unknown state without overflowing."""
+    entity = _entity(
+        hass,
+        {
+            "residual_electricity": _property(
+                "residual_electricity",
+                10**400,
+            )
+        },
+    )
+
+    assert entity.state is None
     assert entity.native_value is None
 
 
