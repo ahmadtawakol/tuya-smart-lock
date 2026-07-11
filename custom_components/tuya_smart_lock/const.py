@@ -28,7 +28,9 @@ LOCK_CATEGORIES = {
 }
 
 TICKET_ENDPOINT = "/v1.0/devices/{device_id}/door-lock/password-ticket"
-DOOR_OPERATE_ENDPOINT = "/v1.0/smart-lock/devices/{device_id}/password-free/door-operate"
+DOOR_OPERATE_ENDPOINT = (
+    "/v1.0/smart-lock/devices/{device_id}/password-free/door-operate"
+)
 STATUS_ENDPOINT = "/v1.0/iot-03/devices/{device_id}/status"
 DEVICES_ENDPOINT = "/v1.0/users/{uid}/devices"
 REMOTE_UNLOCKS_ENDPOINT = "/v1.0/devices/{device_id}/door-lock/remote-unlocks"

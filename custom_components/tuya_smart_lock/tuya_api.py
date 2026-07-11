@@ -132,7 +132,9 @@ class TuyaCloudApi:
 
         # Response structure: result.devices (list)
         result = resp.get("result", {})
-        all_devices = result.get("devices", result) if isinstance(result, dict) else result
+        all_devices = (
+            result.get("devices", result) if isinstance(result, dict) else result
+        )
 
         devices = []
         for device in all_devices:
@@ -189,7 +191,9 @@ class TuyaCloudApi:
         ticket_id = ticket_resp["result"]["ticket_id"]
 
         path = DOOR_OPERATE_ENDPOINT.format(device_id=device_id)
-        unlock_resp = await self._request("POST", path, {"ticket_id": ticket_id, "open": True})
+        unlock_resp = await self._request(
+            "POST", path, {"ticket_id": ticket_id, "open": True}
+        )
 
         if not unlock_resp.get("success"):
             _LOGGER.error("Failed to unlock: %s", unlock_resp.get("msg"))
@@ -210,7 +214,9 @@ class TuyaCloudApi:
         ticket_id = ticket_resp["result"]["ticket_id"]
 
         path = DOOR_OPERATE_ENDPOINT.format(device_id=device_id)
-        lock_resp = await self._request("POST", path, {"ticket_id": ticket_id, "open": False})
+        lock_resp = await self._request(
+            "POST", path, {"ticket_id": ticket_id, "open": False}
+        )
 
         if not lock_resp.get("success"):
             _LOGGER.error("Failed to lock: %s", lock_resp.get("msg"))
@@ -220,7 +226,10 @@ class TuyaCloudApi:
         return True
 
     async def async_get_lock_state(self, device_id: str) -> bool | None:
-        """Get lock_motor_state. Returns True if unlocked, False if locked, None on error."""
+        """Get lock_motor_state.
+
+        Returns True if unlocked, False if locked, None on error.
+        """
         path = STATUS_ENDPOINT.format(device_id=device_id)
         resp = await self._request("GET", path)
 

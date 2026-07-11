@@ -41,7 +41,9 @@ class TuyaSmartLock(LockEntity):
     _attr_name = None
     _attr_should_poll = False
 
-    def __init__(self, api, device_id: str, device_name: str, auto_lock_time: int) -> None:
+    def __init__(
+        self, api, device_id: str, device_name: str, auto_lock_time: int
+    ) -> None:
         self._api = api
         self._device_id = device_id
         self._auto_lock_time = auto_lock_time
@@ -93,4 +95,3 @@ class TuyaSmartLock(LockEntity):
         """Reset state to locked after auto-lock delay."""
         self._attr_is_locked = True
         self.async_write_ha_state()
-
