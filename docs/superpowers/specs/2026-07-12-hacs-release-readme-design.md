@@ -116,4 +116,3 @@ pass on the pushed release commit before tagging.
   exact commit to pass before releasing.
 - If the published release is found to be defective, do not move the tag;
   publish a new patch version instead.
-

@@ -65,15 +65,21 @@ def test_readme_publishes_hacs_custom_repository_installation() -> None:
     expected_order = (
         "Home Assistant 2026.7.2 or newer",
         "open HACS",
-        "three-dot menu in the upper-right",
+        "upper-right three-dot menu",
         "**Custom repositories**",
         REPOSITORY,
         "**Integration**",
-        "Install **Tuya Smart Lock**",
+        "**Add**",
+        "Open **Tuya Smart Lock** in HACS",
+        "**Download**",
         "Restart Home Assistant",
         "Settings > Devices & services",
         "Future published releases appear as updates in HACS.",
         "**Settings > Updates**",
+        "**Install**",
+        "**Pending updates**",
+        "three-dot menu",
+        "**Redownload**",
         "restart Home Assistant afterward",
     )
     cursor = 0
@@ -82,9 +88,15 @@ def test_readme_publishes_hacs_custom_repository_installation() -> None:
         assert position >= 0, f"Missing or out of order: {phrase}"
         cursor = position + len(phrase)
 
+    assert (
+        "This repository is installed as a HACS custom repository; "
+        "it is not listed in the HACS default catalog."
+    ) in hacs_text
     assert "not installable from HACS yet" not in readme
     assert "Neither default-branch publication" not in readme
     assert "available in the HACS default catalog" not in readme
+    assert "included in the HACS default catalog" not in readme
+    assert "included in HACS defaults" not in readme
 
 
 def test_hacs_metadata_requires_supported_home_assistant_release() -> None:

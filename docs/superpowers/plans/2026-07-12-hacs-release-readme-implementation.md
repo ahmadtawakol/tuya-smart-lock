@@ -77,7 +77,7 @@ def test_user_description_uses_safe_tuya_url_placeholder() -> None:
 - [ ] **Step 3: Run the focused tests and observe RED**
 
 ```bash
-.venv/bin/python -m pytest \
+/Users/twkl/Github/tuya-smart-lock/.venv/bin/python -m pytest \
   tests/test_config_flow.py::test_user_step_shows_credentials_form \
   tests/test_config_flow.py::test_credential_failure_shows_actionable_safe_error \
   tests/test_config_flow.py::test_token_endpoint_outage_is_cannot_connect_not_invalid_auth \
@@ -124,9 +124,9 @@ Use this exact value in both files:
 - [ ] **Step 7: Verify and commit**
 
 ```bash
-.venv/bin/python -m pytest tests/test_config_flow.py tests/test_manifest_and_translations.py -q
-.venv/bin/python -m ruff check .
-.venv/bin/python -m ruff format --check .
+/Users/twkl/Github/tuya-smart-lock/.venv/bin/python -m pytest tests/test_config_flow.py tests/test_manifest_and_translations.py -q
+/Users/twkl/Github/tuya-smart-lock/.venv/bin/python -m ruff check .
+/Users/twkl/Github/tuya-smart-lock/.venv/bin/python -m ruff format --check .
 git diff --check
 git add custom_components/tuya_smart_lock/const.py \
   custom_components/tuya_smart_lock/config_flow.py \
@@ -177,7 +177,7 @@ assert f"v{manifest['version']}" == "v1.1.0"
 - [ ] **Step 2: Run the new test and observe RED**
 
 ```bash
-.venv/bin/python -m pytest \
+/Users/twkl/Github/tuya-smart-lock/.venv/bin/python -m pytest \
   tests/test_manifest_and_translations.py::test_readme_documents_release_backed_hacs_installation \
   tests/test_manifest_and_translations.py::test_manifest_describes_release_and_fork_ownership \
   -q
@@ -221,10 +221,10 @@ troubleshooting, and support. Remove duplicated steps and internal terminology.
 - [ ] **Step 5: Verify and commit**
 
 ```bash
-.venv/bin/python -m pytest tests/test_manifest_and_translations.py -q
-.venv/bin/python -m pytest -q
-.venv/bin/python -m ruff check .
-.venv/bin/python -m ruff format --check .
+/Users/twkl/Github/tuya-smart-lock/.venv/bin/python -m pytest tests/test_manifest_and_translations.py -q
+/Users/twkl/Github/tuya-smart-lock/.venv/bin/python -m pytest -q
+/Users/twkl/Github/tuya-smart-lock/.venv/bin/python -m ruff check .
+/Users/twkl/Github/tuya-smart-lock/.venv/bin/python -m ruff format --check .
 git diff --check
 git add README.md tests/test_manifest_and_translations.py
 git commit -m "docs: publish HACS installation guide"
@@ -240,13 +240,17 @@ Expected: full tests and static checks pass; commit succeeds.
 
 - [ ] **Step 1: Audit the feature branch**
 
+Run this step from the feature worktree at
+`/Users/twkl/Github/tuya-smart-lock/.worktrees/hacs-release-readme`.
+
 ```bash
+cd /Users/twkl/Github/tuya-smart-lock/.worktrees/hacs-release-readme
 set -euo pipefail
 git status --short --branch
 git log --oneline origin/main..HEAD
-.venv/bin/python -m pytest -q
-.venv/bin/python -m ruff check .
-.venv/bin/python -m ruff format --check .
+/Users/twkl/Github/tuya-smart-lock/.venv/bin/python -m pytest -q
+/Users/twkl/Github/tuya-smart-lock/.venv/bin/python -m ruff check .
+/Users/twkl/Github/tuya-smart-lock/.venv/bin/python -m ruff format --check .
 git diff --check origin/main...HEAD
 if git show-ref --verify --quiet refs/tags/v1.1.0; then
   echo "Local tag v1.1.0 already exists; aborting" >&2
@@ -273,13 +277,17 @@ release. Any existing tag or release is a blocker and must not be overwritten.
 
 - [ ] **Step 2: Fast-forward local `main` and reverify**
 
+Run this step from the primary checkout at
+`/Users/twkl/Github/tuya-smart-lock`, where `main` is checked out.
+
 ```bash
-git switch main
+cd /Users/twkl/Github/tuya-smart-lock
+test "$(git branch --show-current)" = "main"
 git pull --ff-only origin main
 git merge --ff-only codex/hacs-release-readme
-.venv/bin/python -m pytest -q
-.venv/bin/python -m ruff check .
-.venv/bin/python -m ruff format --check .
+/Users/twkl/Github/tuya-smart-lock/.venv/bin/python -m pytest -q
+/Users/twkl/Github/tuya-smart-lock/.venv/bin/python -m ruff check .
+/Users/twkl/Github/tuya-smart-lock/.venv/bin/python -m ruff format --check .
 git diff --check origin/main...HEAD
 ```
 
@@ -290,7 +298,9 @@ unreviewed merge commit.
 - [ ] **Step 3: Push and record the exact release SHA**
 
 ```bash
+cd /Users/twkl/Github/tuya-smart-lock
 set -euo pipefail
+test "$(git branch --show-current)" = "main"
 git push origin main
 git fetch origin main
 RELEASE_SHA=$(git rev-parse HEAD)
@@ -307,7 +317,9 @@ instead of trusting a recomputed `HEAD`.
 - [ ] **Step 4: Wait for all required jobs on that exact SHA**
 
 ```bash
+cd /Users/twkl/Github/tuya-smart-lock
 set -euo pipefail
+test "$(git branch --show-current)" = "main"
 git fetch origin main
 RELEASE_SHA=$(git rev-parse refs/codex/hacs-release-candidate)
 test "$RELEASE_SHA" = "$(git rev-parse HEAD)"
@@ -352,6 +364,7 @@ repeat all gates with the new SHA, and never release the failed SHA.
 - [ ] **Step 5: Create and push the annotated tag**
 
 ```bash
+cd /Users/twkl/Github/tuya-smart-lock
 set -euo pipefail
 git fetch origin main
 RELEASE_SHA=$(git rev-parse refs/codex/hacs-release-candidate)
@@ -383,6 +396,8 @@ git push origin v1.1.0
 - [ ] **Step 6: Publish the GitHub release**
 
 ```bash
+cd /Users/twkl/Github/tuya-smart-lock
+test "$(git branch --show-current)" = "main"
 gh release create v1.1.0 \
   --repo ahmadtawakol/tuya-smart-lock \
   --verify-tag \
@@ -395,7 +410,9 @@ Expected: non-draft, non-prerelease release with no ZIP asset.
 - [ ] **Step 7: Verify release integrity and clean up**
 
 ```bash
+cd /Users/twkl/Github/tuya-smart-lock
 set -euo pipefail
+test "$(git branch --show-current)" = "main"
 git fetch origin main
 RELEASE_SHA=$(git rev-parse refs/codex/hacs-release-candidate)
 test "$RELEASE_SHA" = "$(git rev-parse HEAD)"
@@ -405,6 +422,7 @@ gh release view v1.1.0 --repo ahmadtawakol/tuya-smart-lock \
 git fetch origin tag v1.1.0
 test "$RELEASE_SHA" = "$(git rev-list -n 1 v1.1.0)"
 git status --short --branch
+git worktree remove /Users/twkl/Github/tuya-smart-lock/.worktrees/hacs-release-readme
 git branch -d codex/hacs-release-readme
 git update-ref -d refs/codex/hacs-release-candidate
 ```
