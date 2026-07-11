@@ -20,6 +20,10 @@ from custom_components.tuya_smart_lock.sensor import TuyaSmartLockBatterySensor
 ROOT = Path(__file__).parents[1]
 INTEGRATION = ROOT / "custom_components" / "tuya_smart_lock"
 REPOSITORY = "https://github.com/ahmadtawakol/tuya-smart-lock"
+HACS_MY_LINK = (
+    "https://my.home-assistant.io/redirect/hacs_repository/"
+    "?owner=ahmadtawakol&repository=tuya-smart-lock&category=integration"
+)
 
 
 def _load_json(path: Path) -> dict:
@@ -33,6 +37,7 @@ def test_manifest_describes_release_and_fork_ownership() -> None:
     manifest = _load_json(INTEGRATION / "manifest.json")
 
     assert manifest["version"] == "1.1.0"
+    assert f"v{manifest['version']}" == "v1.1.0"
     assert manifest["integration_type"] == "device"
     assert manifest["iot_class"] == "cloud_polling"
     assert manifest["config_flow"] is True
@@ -40,6 +45,23 @@ def test_manifest_describes_release_and_fork_ownership() -> None:
     assert manifest["issue_tracker"] == f"{REPOSITORY}/issues"
     assert manifest["codeowners"] == ["@nicolasglg", "@ahmadtawakol"]
     assert manifest["requirements"] == []
+
+
+def test_readme_publishes_hacs_custom_repository_installation() -> None:
+    """The README describes the published HACS custom-repository flow."""
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+
+    assert HACS_MY_LINK in readme
+    assert "https://my.home-assistant.io/badges/hacs_repository.svg" in readme
+    assert REPOSITORY in readme
+    assert "**Integration**" in readme
+    assert "Home Assistant 2026.7.2 or newer" in readme
+    assert "Restart Home Assistant" in readme
+    assert "Settings > Devices & services" in readme
+    assert "Future published releases appear as updates in HACS." in readme
+    assert "not installable from HACS yet" not in readme
+    assert "Neither default-branch publication" not in readme
+    assert "HACS default" not in readme
 
 
 def test_hacs_metadata_requires_supported_home_assistant_release() -> None:
