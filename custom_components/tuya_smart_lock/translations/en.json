@@ -20,6 +20,8 @@
     },
     "error": {
       "invalid_auth": "Invalid credentials. Check your Access ID and Access Secret on iot.tuya.com.",
+      "service_not_authorized": "Tuya Cloud services are not authorized. In your Tuya IoT project, authorize both IoT Core and Smart Lock Open Service, then try again.",
+      "rate_limited": "Tuya Cloud rate limit reached. Wait a few minutes and retry.",
       "cannot_connect": "Cannot connect to Tuya Cloud API. Check your network and region.",
       "remote_unlock_disabled": "Remote unlock is not enabled on this device. Enable it in the Tuya or Smart Life app first."
     },
