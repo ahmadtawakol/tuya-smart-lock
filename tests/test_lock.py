@@ -16,6 +16,9 @@ from custom_components.tuya_smart_lock import (
 from custom_components.tuya_smart_lock import (
     async_setup_entry as async_setup_integration,
 )
+from custom_components.tuya_smart_lock.binary_sensor import (
+    TuyaSmartLockHijackBinarySensor,
+)
 from custom_components.tuya_smart_lock.const import (
     CONF_ACCESS_ID,
     CONF_ACCESS_SECRET,
@@ -40,6 +43,7 @@ from custom_components.tuya_smart_lock.models import (
     TuyaProperty,
     properties_by_code,
 )
+from custom_components.tuya_smart_lock.sensor import TuyaSmartLockBatterySensor
 
 ENTRY_ID = "entry-123"
 DEVICE_ID = "device-123"
@@ -115,10 +119,10 @@ async def test_setup_reads_typed_runtime_and_adds_one_entity(hass) -> None:
     assert entity.coordinator is coordinator
 
 
-async def test_integration_setup_forwards_lock_and_placeholder_platforms(
+async def test_integration_setup_forwards_coordinator_backed_platforms(
     hass,
 ) -> None:
-    """Config-entry setup forwards a working lock alongside placeholders."""
+    """Config-entry setup forwards all implemented coordinator entities."""
     entry = MockConfigEntry(
         domain=DOMAIN,
         entry_id=ENTRY_ID,
@@ -159,9 +163,13 @@ async def test_integration_setup_forwards_lock_and_placeholder_platforms(
     ):
         assert await async_setup_integration(hass, entry) is True
 
-    assert len(entities) == 1
+    assert len(entities) == 3
     assert isinstance(entities[0], TuyaSmartLock)
+    assert isinstance(entities[1], TuyaSmartLockBatterySensor)
+    assert isinstance(entities[2], TuyaSmartLockHijackBinarySensor)
     assert entities[0].state == LockState.LOCKED
+    assert entities[1].native_value is None
+    assert entities[2].is_on is None
     api.async_get_properties.assert_awaited_once_with(DEVICE_ID)
 
 
