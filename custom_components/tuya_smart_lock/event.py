@@ -118,7 +118,7 @@ class _TuyaSmartLockTimestampEvent(TuyaSmartLockEntity, EventEntity):
 class TuyaSmartLockDoorbellEvent(_TuyaSmartLockTimestampEvent):
     """Represent doorbell rings reported by the lock."""
 
-    _attr_name = "Doorbell"
+    _attr_translation_key = "doorbell"
     _attr_device_class = EventDeviceClass.DOORBELL
     _attr_event_types = [DoorbellEventType.RING]
     _source_code = "doorbell"
@@ -142,7 +142,7 @@ class TuyaSmartLockDoorbellEvent(_TuyaSmartLockTimestampEvent):
 class TuyaSmartLockOpenedInsideEvent(_TuyaSmartLockTimestampEvent):
     """Represent the lock being opened from inside."""
 
-    _attr_name = "Opened inside"
+    _attr_translation_key = "opened_inside"
     _attr_event_types = ["opened"]
     _source_code = "open_inside"
     _event_type = "opened"
@@ -165,7 +165,7 @@ class TuyaSmartLockOpenedInsideEvent(_TuyaSmartLockTimestampEvent):
 class TuyaSmartLockAlarmEvent(_TuyaSmartLockTimestampEvent):
     """Represent lock alarm events."""
 
-    _attr_name = "Lock alarm"
+    _attr_translation_key = "lock_alarm"
     _attr_event_types = ["alarm"]
     _source_code = "alarm_lock"
     _event_type = "alarm"
@@ -194,7 +194,7 @@ class TuyaSmartLockAlarmEvent(_TuyaSmartLockTimestampEvent):
 class TuyaSmartLockUnlockEvent(TuyaSmartLockEntity, EventEntity):
     """Represent all supported unlock methods on one event entity."""
 
-    _attr_name = "Unlocked"
+    _attr_translation_key = "unlocked"
     _attr_event_types = list(UNLOCK_EVENT_TYPES_BY_CODE.values())
     _attr_should_poll = False
 

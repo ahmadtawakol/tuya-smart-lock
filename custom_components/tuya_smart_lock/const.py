@@ -28,14 +28,14 @@ API_REGIONS = {
 
 # Tuya device categories that are locks / access control
 LOCK_CATEGORIES = {
-    "mk",        # Access control
-    "ms",        # Smart lock
-    "jtmsbh",    # Smart lock (legacy)
-    "jtmspro",   # Smart lock pro
-    "gyms",      # Gym locker
-    "hotelms",   # Hotel lock
-    "videolock", # Video lock
-    "photolock", # Photo lock
+    "mk",  # Access control
+    "ms",  # Smart lock
+    "jtmsbh",  # Smart lock (legacy)
+    "jtmspro",  # Smart lock pro
+    "gyms",  # Gym locker
+    "hotelms",  # Hotel lock
+    "videolock",  # Video lock
+    "photolock",  # Photo lock
 }
 
 TICKET_ENDPOINT = "/v1.0/devices/{device_id}/door-lock/password-ticket"

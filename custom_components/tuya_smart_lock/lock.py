@@ -43,7 +43,7 @@ async def async_setup_entry(
 class TuyaSmartLock(TuyaSmartLockEntity, LockEntity):
     """Represent the physically confirmed state of a Tuya smart lock."""
 
-    _attr_name = None
+    _attr_translation_key = "lock"
     _attr_should_poll = False
 
     def __init__(

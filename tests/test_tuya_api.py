@@ -96,11 +96,15 @@ def _expected_sign(*, path: str, body: str = "", token: str = "") -> str:
     content_hash = hashlib.sha256(body.encode()).hexdigest()
     string_to_sign = f"GET\n{content_hash}\n\n{path}"
     sign_input = f"{ACCESS_ID}{token}{FIXED_TIMESTAMP}{string_to_sign}"
-    return hmac.new(
-        ACCESS_SECRET.encode(),
-        sign_input.encode(),
-        hashlib.sha256,
-    ).hexdigest().upper()
+    return (
+        hmac.new(
+            ACCESS_SECRET.encode(),
+            sign_input.encode(),
+            hashlib.sha256,
+        )
+        .hexdigest()
+        .upper()
+    )
 
 
 async def test_token_request_uses_expected_signature_and_safe_headers(
@@ -205,9 +209,7 @@ async def test_rejected_cached_token_is_refreshed_and_request_retried_once(
         )
 
     aioclient_mock.get(TOKEN_URL, side_effect=token_response)
-    properties_url = (
-        f"{BASE_URL}/v2.0/cloud/thing/{DEVICE_ID}/shadow/properties"
-    )
+    properties_url = f"{BASE_URL}/v2.0/cloud/thing/{DEVICE_ID}/shadow/properties"
     aioclient_mock.get(properties_url, side_effect=business_response)
     api = _api(hass)
     await api.async_validate_credentials()
@@ -262,9 +264,7 @@ async def test_non_json_401_refreshes_cached_token_and_retries_once(
         )
 
     aioclient_mock.get(TOKEN_URL, side_effect=token_response)
-    properties_url = (
-        f"{BASE_URL}/v2.0/cloud/thing/{DEVICE_ID}/shadow/properties"
-    )
+    properties_url = f"{BASE_URL}/v2.0/cloud/thing/{DEVICE_ID}/shadow/properties"
     aioclient_mock.get(properties_url, side_effect=business_response)
     api = _api(hass)
     await api.async_validate_credentials()
@@ -303,34 +303,31 @@ async def test_rejected_token_retry_is_bounded_to_one_attempt(
         )
 
     aioclient_mock.get(TOKEN_URL, side_effect=token_response)
-    properties_url = (
-        f"{BASE_URL}/v2.0/cloud/thing/{DEVICE_ID}/shadow/properties"
-    )
+    properties_url = f"{BASE_URL}/v2.0/cloud/thing/{DEVICE_ID}/shadow/properties"
     aioclient_mock.get(
         properties_url,
         json={
             "success": False,
             "code": 1011,
-            "msg": (
-                f"token invalid {ACCESS_TOKEN} fresh-access-token ticket-material"
-            ),
+            "msg": (f"token invalid {ACCESS_TOKEN} fresh-access-token ticket-material"),
         },
     )
     api = _api(hass)
     await api.async_validate_credentials()
 
-    with caplog.at_level(logging.DEBUG), pytest.raises(
-        TuyaAuthenticationError
-    ) as error:
+    with (
+        caplog.at_level(logging.DEBUG),
+        pytest.raises(TuyaAuthenticationError) as error,
+    ):
         await api.async_get_properties(DEVICE_ID)
 
     assert error.value.code == "1011"
     assert error.value.__cause__ is None
     assert error.value.__context__ is None
     assert aioclient_mock.call_count == 4
-    assert sum(
-        str(call[1]) == properties_url for call in aioclient_mock.mock_calls
-    ) == 2
+    assert (
+        sum(str(call[1]) == properties_url for call in aioclient_mock.mock_calls) == 2
+    )
     assert api._token is None
     assert api._token_expiry == 0
     exposed = f"{error.value}\n{caplog.text}"
@@ -359,9 +356,7 @@ async def test_non_json_401_retry_is_bounded_and_clears_token_cache(
         )
 
     aioclient_mock.get(TOKEN_URL, side_effect=token_response)
-    properties_url = (
-        f"{BASE_URL}/v2.0/cloud/thing/{DEVICE_ID}/shadow/properties"
-    )
+    properties_url = f"{BASE_URL}/v2.0/cloud/thing/{DEVICE_ID}/shadow/properties"
     aioclient_mock.get(
         properties_url,
         status=401,
@@ -375,9 +370,9 @@ async def test_non_json_401_retry_is_bounded_and_clears_token_cache(
 
     assert str(error.value) == "Tuya authentication failed."
     assert aioclient_mock.call_count == 4
-    assert sum(
-        str(call[1]) == properties_url for call in aioclient_mock.mock_calls
-    ) == 2
+    assert (
+        sum(str(call[1]) == properties_url for call in aioclient_mock.mock_calls) == 2
+    )
     assert api._token is None
     assert api._token_expiry == 0
 
@@ -457,15 +452,14 @@ async def test_token_failure_is_sanitized(
         json={
             "success": False,
             "code": 1004,
-            "msg": (
-                f"{raw_marker} {ACCESS_SECRET} {ACCESS_TOKEN} ticket-material"
-            ),
+            "msg": (f"{raw_marker} {ACCESS_SECRET} {ACCESS_TOKEN} ticket-material"),
         },
     )
 
-    with caplog.at_level(logging.DEBUG), pytest.raises(
-        TuyaAuthenticationError
-    ) as error:
+    with (
+        caplog.at_level(logging.DEBUG),
+        pytest.raises(TuyaAuthenticationError) as error,
+    ):
         await _api(hass).async_validate_credentials()
 
     exposed = f"{error.value}\n{caplog.text}"
@@ -563,9 +557,7 @@ async def test_operate_lock_uses_ticket_and_exact_compact_body(
     )
     _register_token(aioclient_mock)
     ticket_path = f"/v1.0/devices/{DEVICE_ID}/door-lock/password-ticket"
-    operate_path = (
-        f"/v1.0/smart-lock/devices/{DEVICE_ID}/password-free/door-operate"
-    )
+    operate_path = f"/v1.0/smart-lock/devices/{DEVICE_ID}/password-free/door-operate"
     aioclient_mock.post(
         f"{BASE_URL}{ticket_path}",
         json={"success": True, "result": {"ticket_id": "ticket"}},
@@ -589,14 +581,16 @@ async def test_operate_lock_uses_ticket_and_exact_compact_body(
 
     content_hash = hashlib.sha256(body.encode()).hexdigest()
     string_to_sign = f"POST\n{content_hash}\n\n{operate_path}"
-    sign_input = (
-        f"{ACCESS_ID}{ACCESS_TOKEN}{FIXED_TIMESTAMP}{string_to_sign}"
+    sign_input = f"{ACCESS_ID}{ACCESS_TOKEN}{FIXED_TIMESTAMP}{string_to_sign}"
+    expected_sign = (
+        hmac.new(
+            ACCESS_SECRET.encode(),
+            sign_input.encode(),
+            hashlib.sha256,
+        )
+        .hexdigest()
+        .upper()
     )
-    expected_sign = hmac.new(
-        ACCESS_SECRET.encode(),
-        sign_input.encode(),
-        hashlib.sha256,
-    ).hexdigest().upper()
     assert operate_call[3]["sign"] == expected_sign
     assert operate_call[3]["access_token"] == ACCESS_TOKEN
 
@@ -630,10 +624,7 @@ async def test_command_rejection_raises_sanitized_command_error(
         json={"success": True, "result": {"ticket_id": "ticket-material"}},
     )
     aioclient_mock.post(
-        (
-            f"{BASE_URL}/v1.0/smart-lock/devices/{DEVICE_ID}"
-            "/password-free/door-operate"
-        ),
+        (f"{BASE_URL}/v1.0/smart-lock/devices/{DEVICE_ID}/password-free/door-operate"),
         json={
             "success": False,
             "code": 1103,

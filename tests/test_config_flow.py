@@ -99,12 +99,15 @@ async def test_user_step_shows_credentials_form(hass) -> None:
     assert result["type"] is FlowResultType.FORM
     assert result["step_id"] == "user"
     assert result["errors"] == {}
-    assert result["data_schema"](
-        {
-            CONF_ACCESS_ID: ACCESS_ID,
-            CONF_ACCESS_SECRET: ACCESS_SECRET,
-        }
-    ) == CREDENTIALS
+    assert (
+        result["data_schema"](
+            {
+                CONF_ACCESS_ID: ACCESS_ID,
+                CONF_ACCESS_SECRET: ACCESS_SECRET,
+            }
+        )
+        == CREDENTIALS
+    )
 
 
 async def test_valid_credentials_discover_and_configure_selected_lock(
@@ -130,9 +133,7 @@ async def test_valid_credentials_discover_and_configure_selected_lock(
     api.async_discover_devices.side_effect = discover
     api.async_check_remote_unlock.side_effect = check_remote_unlock
 
-    result, session, get_session, api_class = await _submit_credentials(
-        hass, api
-    )
+    result, session, get_session, api_class = await _submit_credentials(hass, api)
 
     assert result["type"] is FlowResultType.FORM
     assert result["step_id"] == "select_device"
@@ -308,8 +309,8 @@ async def test_remote_auth_failure_restarts_with_corrected_credentials(
 ) -> None:
     """Expired selection credentials are discarded and can be replaced."""
     original_api = _api()
-    original_api.async_check_remote_unlock.side_effect = (
-        TuyaAuthenticationError("raw secret detail")
+    original_api.async_check_remote_unlock.side_effect = TuyaAuthenticationError(
+        "raw secret detail"
     )
     selection, _, _, _ = await _submit_credentials(hass, original_api)
 
@@ -440,13 +441,9 @@ async def test_in_progress_device_claim_blocks_concurrent_capability_check(
 
 def test_english_translation_matches_strings_and_has_actionable_errors() -> None:
     """English setup copy stays synchronized and distinguishes error causes."""
-    integration_dir = (
-        Path(__file__).parents[1] / "custom_components" / DOMAIN
-    )
+    integration_dir = Path(__file__).parents[1] / "custom_components" / DOMAIN
     strings = json.loads((integration_dir / "strings.json").read_text())
-    translation = json.loads(
-        (integration_dir / "translations" / "en.json").read_text()
-    )
+    translation = json.loads((integration_dir / "translations" / "en.json").read_text())
 
     assert translation == strings
     errors = strings["config"]["error"]

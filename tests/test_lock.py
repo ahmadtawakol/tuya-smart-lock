@@ -546,9 +546,7 @@ async def test_failed_refresh_cannot_confirm_from_retained_matching_data(
 ) -> None:
     """A stale matching value is ignored while refresh availability is false."""
     api = AsyncMock()
-    api.async_get_properties.side_effect = TuyaApiError(
-        "secret-token property-value"
-    )
+    api.async_get_properties.side_effect = TuyaApiError("secret-token property-value")
     initial = _motor_property(False)
     entity = _entity(hass, api, initial)
 

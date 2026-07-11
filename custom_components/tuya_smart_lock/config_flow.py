@@ -130,9 +130,7 @@ class TuyaSmartLockConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                         title=device_name,
                         data={
                             CONF_ACCESS_ID: self._credentials[CONF_ACCESS_ID],
-                            CONF_ACCESS_SECRET: self._credentials[
-                                CONF_ACCESS_SECRET
-                            ],
+                            CONF_ACCESS_SECRET: self._credentials[CONF_ACCESS_SECRET],
                             CONF_API_REGION: self._credentials[CONF_API_REGION],
                             CONF_DEVICE_ID: device_id,
                             CONF_DEVICE_NAME: device_name,
@@ -143,9 +141,7 @@ class TuyaSmartLockConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         # Discover devices
         if not self._discovered_devices:
             try:
-                self._discovered_devices = (
-                    await self._api.async_discover_devices()
-                )
+                self._discovered_devices = await self._api.async_discover_devices()
             except _FLOW_EXCEPTIONS as error:
                 return self._show_user_form({"base": _flow_error(error)})
 

@@ -51,7 +51,7 @@ async def async_setup_entry(
 class TuyaSmartLockBatterySensor(TuyaSmartLockEntity, SensorEntity):
     """Represent the lock battery percentage."""
 
-    _attr_name = "Battery"
+    _attr_translation_key = "battery"
     _attr_device_class = SensorDeviceClass.BATTERY
     _attr_native_unit_of_measurement = PERCENTAGE
     _attr_state_class = SensorStateClass.MEASUREMENT

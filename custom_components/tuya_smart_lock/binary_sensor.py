@@ -35,7 +35,7 @@ async def async_setup_entry(
 class TuyaSmartLockHijackBinarySensor(TuyaSmartLockEntity, BinarySensorEntity):
     """Represent the lock's hijack safety alarm."""
 
-    _attr_name = "Hijack"
+    _attr_translation_key = "duress"
     _attr_device_class = BinarySensorDeviceClass.SAFETY
     _attr_should_poll = False
 

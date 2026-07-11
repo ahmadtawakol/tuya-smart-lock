@@ -29,5 +29,36 @@
       "already_configured": "This device is already configured.",
       "no_devices_found": "No lock devices found. Make sure your Smart Life / Tuya app account is linked to your IoT project and your device is a supported lock category."
     }
+  },
+  "entity": {
+    "lock": {
+      "lock": {
+        "name": "Lock"
+      }
+    },
+    "sensor": {
+      "battery": {
+        "name": "Battery"
+      }
+    },
+    "binary_sensor": {
+      "duress": {
+        "name": "Duress"
+      }
+    },
+    "event": {
+      "doorbell": {
+        "name": "Doorbell"
+      },
+      "opened_inside": {
+        "name": "Opened inside"
+      },
+      "lock_alarm": {
+        "name": "Lock alarm"
+      },
+      "unlocked": {
+        "name": "Unlocked"
+      }
+    }
   }
 }

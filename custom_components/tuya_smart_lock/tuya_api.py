@@ -31,9 +31,7 @@ DISCOVERY_PATH = "/v1.0/iot-01/associated-users/devices"
 TOKEN_EXPIRY_MARGIN_SECONDS = 60
 REQUEST_TIMEOUT_SECONDS = 12
 
-AUTHENTICATION_ERROR_CODES = frozenset(
-    {"1001", "1002", "1004", "1005", "1007", "1008"}
-)
+AUTHENTICATION_ERROR_CODES = frozenset({"1001", "1002", "1004", "1005", "1007", "1008"})
 INVALID_TOKEN_ERROR_CODES = frozenset({"1010", "1011", "1012", "1400"})
 AUTHORIZATION_ERROR_CODES = frozenset(
     {
@@ -113,11 +111,15 @@ class TuyaCloudApi:
         if access_token is not None:
             sign_input += access_token
         sign_input += timestamp + string_to_sign
-        signature = hmac.new(
-            self._access_secret.encode(),
-            sign_input.encode(),
-            hashlib.sha256,
-        ).hexdigest().upper()
+        signature = (
+            hmac.new(
+                self._access_secret.encode(),
+                sign_input.encode(),
+                hashlib.sha256,
+            )
+            .hexdigest()
+            .upper()
+        )
 
         headers = {
             "client_id": self._access_id,
@@ -155,7 +157,7 @@ class TuyaCloudApi:
                 payload = await response.json()
         except aiohttp.ContentTypeError:
             decode_failed = True
-        except (aiohttp.ClientError, TimeoutError):
+        except aiohttp.ClientError, TimeoutError:
             network_failed = True
         except ValueError:
             decode_failed = True
@@ -321,8 +323,7 @@ class TuyaCloudApi:
             if status < 400 and payload.get("success") is True:
                 return payload
             invalid_token = (
-                status == 401
-                or self._error_code(payload) in INVALID_TOKEN_ERROR_CODES
+                status == 401 or self._error_code(payload) in INVALID_TOKEN_ERROR_CODES
             )
             if invalid_token:
                 self._token = None
@@ -391,8 +392,7 @@ class TuyaCloudApi:
         for unlock_type in result:
             if (
                 isinstance(unlock_type, Mapping)
-                and unlock_type.get("remote_unlock_type")
-                == "remoteUnlockWithoutPwd"
+                and unlock_type.get("remote_unlock_type") == "remoteUnlockWithoutPwd"
             ):
                 return unlock_type.get("open") is True
         return False

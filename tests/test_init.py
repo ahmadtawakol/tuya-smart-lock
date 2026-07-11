@@ -54,9 +54,7 @@ def _entry(hass) -> MockConfigEntry:
 @pytest.mark.parametrize("platform", PLATFORMS)
 def test_forwarded_platform_module_is_importable(platform: Platform) -> None:
     """Every platform advertised by setup provides its standard setup hook."""
-    module = import_module(
-        f"custom_components.tuya_smart_lock.{platform.value}"
-    )
+    module = import_module(f"custom_components.tuya_smart_lock.{platform.value}")
 
     assert callable(module.async_setup_entry)
 
@@ -76,13 +74,9 @@ async def test_setup_uses_shared_session_refreshes_then_forwards(hass) -> None:
         order.append("forward")
         assert forwarded_entry is entry
         assert tuple(platforms) == EXPECTED_PLATFORMS
-        assert isinstance(
-            hass.data[DOMAIN][entry.entry_id], TuyaSmartLockRuntimeData
-        )
+        assert isinstance(hass.data[DOMAIN][entry.entry_id], TuyaSmartLockRuntimeData)
 
-    coordinator.async_config_entry_first_refresh = AsyncMock(
-        side_effect=first_refresh
-    )
+    coordinator.async_config_entry_first_refresh = AsyncMock(side_effect=first_refresh)
     forward = AsyncMock(side_effect=forward_platforms)
 
     with (

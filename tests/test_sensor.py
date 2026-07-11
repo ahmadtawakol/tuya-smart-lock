@@ -1,14 +1,24 @@
 """Tests for the Tuya Smart Lock sensor platform."""
 
-from unittest.mock import AsyncMock, Mock
+from pathlib import Path
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 from homeassistant.components.sensor import SensorDeviceClass, SensorStateClass
-from homeassistant.const import PERCENTAGE
+from homeassistant.const import PERCENTAGE, STATE_UNKNOWN
+from homeassistant.helpers import entity_registry as er
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
+import custom_components
 from custom_components.tuya_smart_lock import TuyaSmartLockRuntimeData
-from custom_components.tuya_smart_lock.const import DOMAIN
+from custom_components.tuya_smart_lock.const import (
+    CONF_ACCESS_ID,
+    CONF_ACCESS_SECRET,
+    CONF_API_REGION,
+    CONF_DEVICE_ID,
+    CONF_DEVICE_NAME,
+    DOMAIN,
+)
 from custom_components.tuya_smart_lock.coordinator import TuyaSmartLockCoordinator
 from custom_components.tuya_smart_lock.models import TuyaProperty
 from custom_components.tuya_smart_lock.sensor import (
@@ -23,6 +33,26 @@ DEVICE_NAME = "Front Door"
 
 def _entry() -> MockConfigEntry:
     return MockConfigEntry(domain=DOMAIN, entry_id=ENTRY_ID)
+
+
+def _real_entry(hass) -> MockConfigEntry:
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        entry_id=ENTRY_ID,
+        data={
+            CONF_ACCESS_ID: "dummy-access-id",
+            CONF_ACCESS_SECRET: "dummy-access-secret",
+            CONF_API_REGION: "eu",
+            CONF_DEVICE_ID: DEVICE_ID,
+            CONF_DEVICE_NAME: DEVICE_NAME,
+        },
+    )
+    entry.add_to_hass(hass)
+    return entry
+
+
+def _valid_custom_component_paths() -> list[str]:
+    return [path for path in custom_components.__path__ if Path(path).is_dir()]
 
 
 def _property(code: str, value: object) -> TuyaProperty:
@@ -52,6 +82,41 @@ def _entity(
         device_id=DEVICE_ID,
         device_name=DEVICE_NAME,
     )
+
+
+async def _real_battery_state(hass, data: dict[str, TuyaProperty]) -> str:
+    """Return the battery state after a real entity-platform attachment."""
+    entry = _real_entry(hass)
+    api = AsyncMock()
+    api.async_get_properties.return_value = data
+
+    with (
+        patch.object(
+            custom_components,
+            "__path__",
+            _valid_custom_component_paths(),
+        ),
+        patch(
+            "custom_components.tuya_smart_lock.TuyaCloudApi",
+            return_value=api,
+        ),
+    ):
+        assert await hass.config_entries.async_setup(entry.entry_id) is True
+        await hass.async_block_till_done()
+
+        entity_id = er.async_get(hass).async_get_entity_id(
+            "sensor",
+            DOMAIN,
+            f"{DEVICE_ID}_battery",
+        )
+        assert entity_id is not None
+        state = hass.states.get(entity_id)
+        assert state is not None
+
+        assert await hass.config_entries.async_unload(entry.entry_id) is True
+        await hass.async_block_till_done()
+
+    return state.state
 
 
 async def test_setup_reads_typed_runtime_and_adds_one_entity(hass) -> None:
@@ -125,11 +190,11 @@ def test_invalid_primary_uses_valid_residual_electricity(
     assert entity.native_value == 47.5
 
 
-def test_unrepresentable_primary_uses_valid_fallback_without_state_error(
+async def test_unrepresentable_primary_uses_valid_fallback_without_state_error(
     hass,
 ) -> None:
     """A huge primary integer cannot break HA state or block the fallback."""
-    entity = _entity(
+    state = await _real_battery_state(
         hass,
         {
             "battery_percentage": _property("battery_percentage", 10**400),
@@ -137,8 +202,7 @@ def test_unrepresentable_primary_uses_valid_fallback_without_state_error(
         },
     )
 
-    assert entity.state == 38
-    assert entity.native_value == 38
+    assert state == "38"
 
 
 @pytest.mark.parametrize(
@@ -158,9 +222,9 @@ def test_invalid_residual_electricity_is_unknown(
     assert entity.native_value is None
 
 
-def test_unrepresentable_fallback_is_unknown_without_state_error(hass) -> None:
+async def test_unrepresentable_fallback_is_unknown_without_state_error(hass) -> None:
     """A huge fallback integer produces unknown state without overflowing."""
-    entity = _entity(
+    state = await _real_battery_state(
         hass,
         {
             "residual_electricity": _property(
@@ -170,8 +234,7 @@ def test_unrepresentable_fallback_is_unknown_without_state_error(hass) -> None:
         },
     )
 
-    assert entity.state is None
-    assert entity.native_value is None
+    assert state == STATE_UNKNOWN
 
 
 def test_missing_battery_datapoints_are_unknown(hass) -> None:
