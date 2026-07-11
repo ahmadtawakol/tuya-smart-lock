@@ -843,6 +843,92 @@ async def test_offline_command_codes_raise_device_unavailable_error(
 
 
 @pytest.mark.parametrize(
+    ("code", "conflicting_message", "command_request", "error_type", "message"),
+    [
+        (
+            1004,
+            "system is busy, please retry later",
+            False,
+            TuyaAuthenticationError,
+            "Tuya authentication failed.",
+        ),
+        (
+            1106,
+            "too many requests",
+            False,
+            TuyaAuthorizationError,
+            "Tuya API access is not authorized.",
+        ),
+        (
+            1110,
+            "permission deny",
+            False,
+            TuyaRateLimitError,
+            "Tuya API rate limit exceeded.",
+        ),
+        (
+            2001,
+            "system is busy, please retry later",
+            True,
+            TuyaDeviceUnavailableError,
+            "Tuya lock device is unavailable.",
+        ),
+    ],
+    ids=["authentication", "authorization", "rate-limit", "device-unavailable"],
+)
+async def test_recognized_code_wins_over_conflicting_message_marker(
+    hass: HomeAssistant,
+    code: int,
+    conflicting_message: str,
+    command_request: bool,
+    error_type: type[TuyaApiError],
+    message: str,
+) -> None:
+    """Authoritative Tuya codes cannot be overridden by free-form messages."""
+    api = _api(hass)
+
+    with pytest.raises(error_type) as error:
+        api._raise_response_error(
+            {"success": False, "code": code, "msg": conflicting_message},
+            status=200,
+            command_request=command_request,
+        )
+
+    assert type(error.value) is error_type
+    assert str(error.value) == message
+    assert error.value.code == str(code)
+
+
+@pytest.mark.parametrize(
+    ("status", "code", "error_type"),
+    [
+        (401, 1110, TuyaAuthenticationError),
+        (403, 1004, TuyaAuthorizationError),
+        (429, 1004, TuyaRateLimitError),
+        (503, 1004, TuyaApiError),
+    ],
+    ids=["http-auth", "http-authorization", "http-rate-limit", "http-server-error"],
+)
+async def test_http_status_precedence_is_preserved_over_recognized_code(
+    hass: HomeAssistant,
+    status: int,
+    code: int,
+    error_type: type[TuyaApiError],
+) -> None:
+    """Explicit HTTP categories and transient server failures stay authoritative."""
+    api = _api(hass)
+
+    with pytest.raises(error_type) as error:
+        api._raise_response_error(
+            {"success": False, "code": code, "msg": "conflicting raw detail"},
+            status=status,
+            command_request=True,
+        )
+
+    assert type(error.value) is error_type
+
+
+@pytest.mark.parametrize(
     ("response", "error_type", "message", "code"),
     [
         (

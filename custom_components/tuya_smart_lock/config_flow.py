@@ -100,6 +100,7 @@ class TuyaSmartLockConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 }
             ),
             errors=errors or {},
+            description_placeholders={"name": entry.title},
         )
 
     async def async_step_user(self, user_input: dict | None = None):

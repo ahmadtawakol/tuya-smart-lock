@@ -218,9 +218,7 @@ class TuyaCloudApi:
             )
         if status >= 500 or code in TRANSIENT_SYSTEM_ERROR_CODES:
             raise TuyaApiError("Tuya API request failed.", code=code)
-        if code in RATE_LIMIT_ERROR_CODES or self._message_matches(
-            message, RATE_LIMIT_MESSAGE_MARKERS
-        ):
+        if code in RATE_LIMIT_ERROR_CODES:
             raise TuyaRateLimitError(
                 "Tuya API rate limit exceeded.",
                 code=code,
@@ -230,9 +228,7 @@ class TuyaCloudApi:
                 "Tuya authentication failed.",
                 code=code,
             )
-        if code in AUTHORIZATION_ERROR_CODES or self._message_matches(
-            message, AUTHORIZATION_MESSAGE_MARKERS
-        ):
+        if code in AUTHORIZATION_ERROR_CODES:
             raise TuyaAuthorizationError(
                 "Tuya API access is not authorized.",
                 code=code,
@@ -240,6 +236,16 @@ class TuyaCloudApi:
         if command_request and code in DEVICE_UNAVAILABLE_ERROR_CODES:
             raise TuyaDeviceUnavailableError(
                 "Tuya lock device is unavailable.",
+                code=code,
+            )
+        if self._message_matches(message, RATE_LIMIT_MESSAGE_MARKERS):
+            raise TuyaRateLimitError(
+                "Tuya API rate limit exceeded.",
+                code=code,
+            )
+        if self._message_matches(message, AUTHORIZATION_MESSAGE_MARKERS):
+            raise TuyaAuthorizationError(
+                "Tuya API access is not authorized.",
                 code=code,
             )
         if command_request:

@@ -151,6 +151,7 @@ async def test_reauth_step_shows_credentials_without_device_field(hass) -> None:
     assert result["type"] is FlowResultType.FORM
     assert result["step_id"] == "reauth_confirm"
     assert result["errors"] == {}
+    assert result["description_placeholders"] == {"name": DEVICE_NAME}
     assert result["data_schema"](
         {
             CONF_ACCESS_ID: "replacement-id",
@@ -171,6 +172,22 @@ async def test_reauth_step_shows_credentials_without_device_field(hass) -> None:
                 CONF_DEVICE_ID: "different-device",
             }
         )
+
+
+def test_reauth_form_explicitly_passes_entry_title_placeholder() -> None:
+    """The integration supplies the placeholder used by its reauth description."""
+    entry = _reauth_entry()
+    flow = config_flow.TuyaSmartLockConfigFlow()
+
+    with (
+        patch.object(flow, "_get_reauth_entry", return_value=entry),
+        patch.object(flow, "async_show_form", return_value={}) as show_form,
+    ):
+        flow._show_reauth_form()
+
+    assert show_form.call_args.kwargs["description_placeholders"] == {
+        "name": DEVICE_NAME
+    }
 
 
 @pytest.mark.parametrize(
