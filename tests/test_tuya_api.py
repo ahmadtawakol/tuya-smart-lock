@@ -329,6 +329,69 @@ async def test_rejected_cached_token_is_refreshed_and_request_retried_once(
     ]
 
 
+@pytest.mark.parametrize(
+    ("method", "path", "status", "error_type", "command_request"),
+    [
+        (
+            "GET",
+            f"/v2.0/cloud/thing/{DEVICE_ID}/shadow/properties",
+            403,
+            TuyaAuthorizationError,
+            False,
+        ),
+        (
+            "GET",
+            f"/v2.0/cloud/thing/{DEVICE_ID}/shadow/properties",
+            429,
+            TuyaRateLimitError,
+            False,
+        ),
+        (
+            "POST",
+            f"/v1.0/devices/{DEVICE_ID}/door-lock/password-ticket",
+            503,
+            TuyaApiError,
+            True,
+        ),
+    ],
+    ids=["http-403", "http-429", "http-503-post-command"],
+)
+async def test_authoritative_http_error_does_not_refresh_or_replay_invalid_token(
+    hass: HomeAssistant,
+    aioclient_mock: AiohttpClientMocker,
+    method: str,
+    path: str,
+    status: int,
+    error_type: type[TuyaApiError],
+    command_request: bool,
+) -> None:
+    """Conflicting invalid-token codes cannot override HTTP retry eligibility."""
+    _register_token(aioclient_mock)
+    business_url = f"{BASE_URL}{path}"
+    register_business = aioclient_mock.post if method == "POST" else aioclient_mock.get
+    register_business(
+        business_url,
+        status=status,
+        json={"success": False, "code": 1010, "msg": "token expired"},
+    )
+    api = _api(hass)
+
+    with pytest.raises(error_type) as error:
+        await api._request(
+            method,
+            path,
+            {"open": True} if method == "POST" else None,
+            command_request=command_request,
+        )
+
+    assert type(error.value) is error_type
+    assert sum(str(call[1]) == TOKEN_URL for call in aioclient_mock.mock_calls) == 1
+    assert sum(str(call[1]) == business_url for call in aioclient_mock.mock_calls) == 1
+    assert aioclient_mock.call_count == 2
+    assert api._token == ACCESS_TOKEN
+    assert api._token_expiry > 0
+
+
 async def test_non_json_401_refreshes_cached_token_and_retries_once(
     hass: HomeAssistant,
     aioclient_mock: AiohttpClientMocker,

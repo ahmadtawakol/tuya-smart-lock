@@ -329,8 +329,10 @@ class TuyaCloudApi:
             )
             if status < 400 and payload.get("success") is True:
                 return payload
-            invalid_token = (
-                status == 401 or self._error_code(payload) in INVALID_TOKEN_ERROR_CODES
+            invalid_token = status == 401 or (
+                status not in (403, 429)
+                and status < 500
+                and self._error_code(payload) in INVALID_TOKEN_ERROR_CODES
             )
             if invalid_token:
                 if self._token == request_token:
