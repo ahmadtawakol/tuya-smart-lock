@@ -19,6 +19,19 @@ def test_normalize_timestamp_ms_converts_seconds() -> None:
     assert normalize_timestamp_ms(1_783_792_375) == 1_783_792_375_000
 
 
+def test_normalize_timestamp_ms_handles_huge_integer() -> None:
+    """Large integer timestamps do not overflow float conversion."""
+    timestamp = 10**400
+
+    assert normalize_timestamp_ms(timestamp) == timestamp
+
+
+@pytest.mark.parametrize("timestamp", [float("nan"), float("inf"), float("-inf")])
+def test_normalize_timestamp_ms_rejects_non_finite_float(timestamp: float) -> None:
+    """NaN and positive or negative infinity are rejected."""
+    assert normalize_timestamp_ms(timestamp) is None
+
+
 @pytest.mark.parametrize("timestamp", [None, "bad", True, -1])
 def test_normalize_timestamp_ms_rejects_invalid_values(timestamp: object) -> None:
     """Missing, non-numeric, boolean, and negative timestamps are rejected."""

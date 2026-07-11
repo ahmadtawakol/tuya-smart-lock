@@ -19,9 +19,13 @@ class TuyaProperty:
 
 def normalize_timestamp_ms(value: object) -> int | None:
     """Normalize a numeric Unix timestamp to milliseconds."""
-    if isinstance(value, bool) or not isinstance(value, int | float):
+    if isinstance(value, bool):
         return None
-    if value < 0 or not isfinite(value):
+    if isinstance(value, int):
+        if value < 0:
+            return None
+        return value * 1000 if value < SECONDS_TIMESTAMP_CUTOFF else value
+    if not isinstance(value, float) or value < 0 or not isfinite(value):
         return None
     if value < SECONDS_TIMESTAMP_CUTOFF:
         value *= 1000
