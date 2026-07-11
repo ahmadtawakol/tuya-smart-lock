@@ -38,11 +38,14 @@ INVALID_TOKEN_ERROR_CODES = frozenset({"1010", "1011", "1012", "1400"})
 AUTHORIZATION_ERROR_CODES = frozenset(
     {
         "1106",
+        "1114",
         "2406",
         "28841001",
         "28841002",
+        "28841003",
         "28841101",
         "28841102",
+        "28841103",
         "28841105",
         "28841106",
     }
@@ -165,6 +168,8 @@ class TuyaCloudApi:
             raise TuyaApiError("Tuya API returned an invalid response.")
 
         if not isinstance(payload, Mapping):
+            if status >= 400:
+                return {}, status
             raise TuyaApiError("Tuya API returned an invalid response.")
         return payload, status
 
@@ -315,13 +320,15 @@ class TuyaCloudApi:
             )
             if status < 400 and payload.get("success") is True:
                 return payload
-            if (
-                attempt == 0
-                and self._error_code(payload) in INVALID_TOKEN_ERROR_CODES
-            ):
+            invalid_token = (
+                status == 401
+                or self._error_code(payload) in INVALID_TOKEN_ERROR_CODES
+            )
+            if invalid_token:
                 self._token = None
                 self._token_expiry = 0
-                continue
+                if attempt == 0:
+                    continue
             self._raise_response_error(
                 payload,
                 status=status,

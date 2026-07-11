@@ -3,7 +3,7 @@
 import hashlib
 import hmac
 import logging
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import aiohttp
 import pytest
@@ -44,11 +44,14 @@ SUPPORTED_CODE_CASES = [
         (code, TuyaAuthorizationError, "Tuya API access is not authorized.")
         for code in (
             1106,
+            1114,
             2406,
             28841001,
             28841002,
+            28841003,
             28841101,
             28841102,
+            28841103,
             28841105,
             28841106,
         )
@@ -221,6 +224,63 @@ async def test_rejected_cached_token_is_refreshed_and_request_retried_once(
     ]
 
 
+async def test_non_json_401_refreshes_cached_token_and_retries_once(
+    hass: HomeAssistant,
+    aioclient_mock: AiohttpClientMocker,
+) -> None:
+    """An authenticated non-JSON 401 refreshes the token before one retry."""
+    fresh_token = "fresh-access-token"
+    issued_tokens = iter((ACCESS_TOKEN, fresh_token))
+
+    async def token_response(method, url, data):
+        return AiohttpClientMockResponse(
+            method,
+            url,
+            json={
+                "success": True,
+                "result": {
+                    "access_token": next(issued_tokens),
+                    "expire_time": 7200,
+                },
+            },
+        )
+
+    business_attempts = iter((1, 2))
+
+    async def business_response(method, url, data):
+        if next(business_attempts) == 1:
+            return AiohttpClientMockResponse(
+                method,
+                url,
+                status=401,
+                text=f"not-json {ACCESS_TOKEN} ticket-material",
+            )
+        return AiohttpClientMockResponse(
+            method,
+            url,
+            json={"success": True, "result": {"properties": []}},
+        )
+
+    aioclient_mock.get(TOKEN_URL, side_effect=token_response)
+    properties_url = (
+        f"{BASE_URL}/v2.0/cloud/thing/{DEVICE_ID}/shadow/properties"
+    )
+    aioclient_mock.get(properties_url, side_effect=business_response)
+    api = _api(hass)
+    await api.async_validate_credentials()
+
+    assert await api.async_get_properties(DEVICE_ID) == {}
+
+    assert aioclient_mock.call_count == 4
+    business_calls = [
+        call for call in aioclient_mock.mock_calls if str(call[1]) == properties_url
+    ]
+    assert [call[3]["access_token"] for call in business_calls] == [
+        ACCESS_TOKEN,
+        fresh_token,
+    ]
+
+
 async def test_rejected_token_retry_is_bounded_to_one_attempt(
     hass: HomeAssistant,
     aioclient_mock: AiohttpClientMocker,
@@ -271,9 +331,55 @@ async def test_rejected_token_retry_is_bounded_to_one_attempt(
     assert sum(
         str(call[1]) == properties_url for call in aioclient_mock.mock_calls
     ) == 2
+    assert api._token is None
+    assert api._token_expiry == 0
     exposed = f"{error.value}\n{caplog.text}"
     for sensitive in (ACCESS_TOKEN, "fresh-access-token", "ticket-material"):
         assert sensitive not in exposed
+
+
+async def test_non_json_401_retry_is_bounded_and_clears_token_cache(
+    hass: HomeAssistant,
+    aioclient_mock: AiohttpClientMocker,
+) -> None:
+    """A second HTTP 401 is raised with the refreshed token cache cleared."""
+    issued_tokens = iter((ACCESS_TOKEN, "fresh-access-token"))
+
+    async def token_response(method, url, data):
+        return AiohttpClientMockResponse(
+            method,
+            url,
+            json={
+                "success": True,
+                "result": {
+                    "access_token": next(issued_tokens),
+                    "expire_time": 7200,
+                },
+            },
+        )
+
+    aioclient_mock.get(TOKEN_URL, side_effect=token_response)
+    properties_url = (
+        f"{BASE_URL}/v2.0/cloud/thing/{DEVICE_ID}/shadow/properties"
+    )
+    aioclient_mock.get(
+        properties_url,
+        status=401,
+        text=f"not-json {ACCESS_TOKEN} fresh-access-token ticket-material",
+    )
+    api = _api(hass)
+    await api.async_validate_credentials()
+
+    with pytest.raises(TuyaAuthenticationError) as error:
+        await api.async_get_properties(DEVICE_ID)
+
+    assert str(error.value) == "Tuya authentication failed."
+    assert aioclient_mock.call_count == 4
+    assert sum(
+        str(call[1]) == properties_url for call in aioclient_mock.mock_calls
+    ) == 2
+    assert api._token is None
+    assert api._token_expiry == 0
 
 
 async def test_client_uses_injected_session_without_constructing_one(
@@ -761,6 +867,49 @@ async def test_non_json_response_preserves_http_error_classification(
     assert error.value.__context__ is None
     for sensitive in (ACCESS_SECRET, ACCESS_TOKEN, "ticket-material"):
         assert sensitive not in exposed
+
+
+@pytest.mark.parametrize(
+    ("status", "error_type", "message"),
+    [
+        (401, TuyaAuthenticationError, "Tuya authentication failed."),
+        (403, TuyaAuthorizationError, "Tuya API access is not authorized."),
+        (429, TuyaRateLimitError, "Tuya API rate limit exceeded."),
+        (200, TuyaApiError, "Tuya API returned an invalid response."),
+    ],
+)
+async def test_empty_json_response_preserves_http_error_classification(
+    hass: HomeAssistant,
+    aioclient_mock: AiohttpClientMocker,
+    status: int,
+    error_type: type[TuyaApiError],
+    message: str,
+) -> None:
+    """An empty JSON body decoded as None retains safe status classification."""
+    _register_token(aioclient_mock)
+
+    async def empty_json_response(method, url, data):
+        response = AiohttpClientMockResponse(
+            method,
+            url,
+            status=status,
+            response=b"",
+            headers={"Content-Type": "application/json"},
+        )
+        response.json = AsyncMock(return_value=None)
+        return response
+
+    aioclient_mock.get(
+        f"{BASE_URL}/v2.0/cloud/thing/{DEVICE_ID}/shadow/properties",
+        side_effect=empty_json_response,
+    )
+
+    with pytest.raises(error_type) as error:
+        await _api(hass).async_get_properties(DEVICE_ID)
+
+    assert str(error.value) == message
+    assert error.value.__cause__ is None
+    assert error.value.__context__ is None
 
 
 async def test_discovery_filters_to_supported_lock_categories(
