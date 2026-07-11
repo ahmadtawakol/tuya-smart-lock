@@ -3,6 +3,8 @@
 import json
 from pathlib import Path
 
+import yaml
+
 from custom_components.tuya_smart_lock.binary_sensor import (
     TuyaSmartLockHijackBinarySensor,
 )
@@ -31,6 +33,7 @@ def test_manifest_describes_release_and_fork_ownership() -> None:
     manifest = _load_json(INTEGRATION / "manifest.json")
 
     assert manifest["version"] == "1.1.0"
+    assert manifest["integration_type"] == "device"
     assert manifest["iot_class"] == "cloud_polling"
     assert manifest["config_flow"] is True
     assert manifest["documentation"] == REPOSITORY
@@ -47,6 +50,32 @@ def test_hacs_metadata_requires_supported_home_assistant_release() -> None:
         "name": "Tuya Smart Lock",
         "homeassistant": "2026.7.2",
         "render_readme": True,
+    }
+
+
+def test_ci_runs_tests_hacs_validation_and_hassfest() -> None:
+    """CI validates Python, HACS integration metadata, and HA metadata."""
+    workflow = yaml.safe_load(
+        (ROOT / ".github" / "workflows" / "tests.yml").read_text(encoding="utf-8")
+    )
+
+    assert workflow["permissions"] == {"contents": "read"}
+    assert set(workflow["jobs"]) == {"test", "hacs", "hassfest"}
+
+    hacs_steps = workflow["jobs"]["hacs"]["steps"]
+    assert {step.get("uses") for step in hacs_steps} >= {
+        "actions/checkout@v4",
+        "hacs/action@main",
+    }
+    hacs_action = next(
+        step for step in hacs_steps if step.get("uses") == "hacs/action@main"
+    )
+    assert hacs_action["with"] == {"category": "integration"}
+
+    hassfest_steps = workflow["jobs"]["hassfest"]["steps"]
+    assert {step.get("uses") for step in hassfest_steps} >= {
+        "actions/checkout@v4",
+        "home-assistant/actions/hassfest@master",
     }
 
 

@@ -43,20 +43,23 @@ Home Assistant event attributes, but the integration does not write it to logs.
 
 ## Prerequisites
 
-1. Create a **Smart Home** cloud project at
+1. Run **Home Assistant 2026.7.2 or newer**. Older Home Assistant releases and
+   older Python runtimes are unsupported; this integration targets Python 3.14
+   or newer.
+2. Create a **Smart Home** cloud project at
    [Tuya IoT Platform](https://iot.tuya.com).
-2. Select the data center that owns the app account and devices. Choose the
+3. Select the data center that owns the app account and devices. Choose the
    integration region that matches it: Europe, Americas, China, or India. The
    target-device diagnostic used the US data center and **Americas** region.
-3. Under **Devices > Link Tuya App Account**, link the Tuya Smart or Smart Life
+4. Under **Devices > Link Tuya App Account**, link the Tuya Smart or Smart Life
    account that owns the lock and confirm that the device appears in the cloud
    project.
-4. Under **Service API**, authorize both **IoT Core** and
+5. Under **Service API**, authorize both **IoT Core** and
    **Smart Lock Open Service**. Renew either service if its trial has expired.
-5. In the lock's Tuya Smart or Smart Life settings, enable remote locking and
+6. In the lock's Tuya Smart or Smart Life settings, enable remote locking and
    remote unlock/password-free remote control. Availability and wording depend
    on the lock firmware and app.
-6. Copy the cloud project's **Access ID** and **Access Secret** for setup.
+7. Copy the cloud project's **Access ID** and **Access Secret** for setup.
 
 Remote door control is safety-sensitive. Confirm that the mobile app can lock
 and unlock the device before configuring Home Assistant.
@@ -65,15 +68,23 @@ and unlock the device before configuring Home Assistant.
 
 ### Manual
 
-1. Download or clone this repository.
-2. Copy the complete `custom_components/tuya_smart_lock` directory into the
+1. Verify Home Assistant is **2026.7.2 or newer**. Manual installation does not
+   make older Home Assistant or Python versions compatible.
+2. Download or clone this repository.
+3. Copy the complete `custom_components/tuya_smart_lock` directory into the
    Home Assistant configuration directory as
    `custom_components/tuya_smart_lock`.
-3. Restart Home Assistant.
-4. Add the integration from **Settings > Devices & services > Add integration >
+4. Restart Home Assistant.
+5. Add the integration from **Settings > Devices & services > Add integration >
    Tuya Smart Lock**.
 
 ### HACS custom repository
+
+This feature branch is not installable from HACS yet. Once this code is on the
+fork's default branch, HACS can install that branch through a custom repository
+without requiring a release. The maintainers may instead publish a recommended
+`v1.1.0` tag and release. Neither default-branch publication nor a `v1.1.0`
+release is claimed to have happened here.
 
 1. In HACS, open **Integrations**, then **Custom repositories**.
 2. Add `https://github.com/ahmadtawakol/tuya-smart-lock` with category
@@ -81,10 +92,8 @@ and unlock the device before configuring Home Assistant.
 3. Install **Tuya Smart Lock**, restart Home Assistant, and add the integration
    from **Settings > Devices & services**.
 
-HACS installs releases, not an unpublished branch. A `v1.1.0` GitHub release and
-tag must exist before HACS users can receive the code described here. Until
-then, use the manual installation method; this README does not claim that
-`v1.1.0` is already published.
+Until one of those maintainer publication steps happens, use the manual
+installation method for this branch.
 
 ## Configuration
 
@@ -134,8 +143,16 @@ For cautious on-device validation, use the
 When reporting a problem, include Home Assistant and integration versions,
 device category/model, API region, and sanitized diagnostics. Never include an
 Access Secret, access token, command ticket, device/account identifier, or raw
-credential payload. File issues at
-[ahmadtawakol/tuya-smart-lock](https://github.com/ahmadtawakol/tuya-smart-lock/issues).
+credential payload.
+
+## Support status
+
+[GitHub Issues on the fork](https://github.com/ahmadtawakol/tuya-smart-lock/issues)
+is the designated support path and must be enabled before publication. For this
+feature branch, the repository's Issues and public repository metadata are
+separate maintainer settings that may not be enabled yet; this document does
+not present the tracker as already available. Once Issues is enabled, use it for
+sanitized bug reports and support requests.
 
 ## License
 
