@@ -100,12 +100,14 @@ class _TuyaSmartLockTimestampEvent(TuyaSmartLockEntity, EventEntity):
         """Emit an event only when its source timestamp advances."""
         prop = self.coordinator.data.get(self._source_code)
         if prop is None:
+            super()._handle_coordinator_update()
             return
         timestamp_ms = _valid_timestamp_ms(prop)
         if timestamp_ms is None or (
             self._last_timestamp_ms is not None
             and timestamp_ms <= self._last_timestamp_ms
         ):
+            super()._handle_coordinator_update()
             return
 
         self._last_timestamp_ms = timestamp_ms
@@ -232,18 +234,19 @@ class TuyaSmartLockUnlockEvent(TuyaSmartLockEntity, EventEntity):
             timestamp_ms = _valid_timestamp_ms(prop)
             last_timestamp_ms = self._last_timestamps_ms[code]
             if timestamp_ms is None or (
-                last_timestamp_ms is not None
-                and timestamp_ms <= last_timestamp_ms
+                last_timestamp_ms is not None and timestamp_ms <= last_timestamp_ms
             ):
                 continue
             advanced.append((timestamp_ms, code, prop))
 
+        if not advanced:
+            super()._handle_coordinator_update()
+            return
+
         for timestamp_ms, code, prop in sorted(advanced):
             self._last_timestamps_ms[code] = timestamp_ms
             attributes = (
-                {"credential_id": prop.value}
-                if type(prop.value) is int
-                else None
+                {"credential_id": prop.value} if type(prop.value) is int else None
             )
             self._trigger_event(UNLOCK_EVENT_TYPES_BY_CODE[code], attributes)
             self.async_write_ha_state()

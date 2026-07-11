@@ -1,25 +1,59 @@
 """Tests for the Tuya Smart Lock event platform."""
 
-from collections.abc import Mapping
-from unittest.mock import AsyncMock, Mock
+from pathlib import Path
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 from homeassistant.components.event import DoorbellEventType, EventDeviceClass
+from homeassistant.const import ATTR_RESTORED, STATE_UNAVAILABLE, STATE_UNKNOWN
+from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers.entity_platform import async_get_platforms
+from homeassistant.helpers.event import async_track_state_change_event
+from homeassistant.helpers.update_coordinator import UpdateFailed
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
+import custom_components
 from custom_components.tuya_smart_lock import TuyaSmartLockRuntimeData
 from custom_components.tuya_smart_lock import event as event_platform
-from custom_components.tuya_smart_lock.const import DOMAIN
+from custom_components.tuya_smart_lock.const import (
+    CONF_ACCESS_ID,
+    CONF_ACCESS_SECRET,
+    CONF_API_REGION,
+    CONF_DEVICE_ID,
+    CONF_DEVICE_NAME,
+    DOMAIN,
+)
 from custom_components.tuya_smart_lock.coordinator import TuyaSmartLockCoordinator
 from custom_components.tuya_smart_lock.models import TuyaProperty
 
 ENTRY_ID = "entry-123"
 DEVICE_ID = "device-123"
 DEVICE_NAME = "Front Door"
+ENTRY_DATA = {
+    CONF_ACCESS_ID: "dummy-access-id",
+    CONF_ACCESS_SECRET: "dummy-access-secret",
+    CONF_API_REGION: "eu",
+    CONF_DEVICE_ID: DEVICE_ID,
+    CONF_DEVICE_NAME: DEVICE_NAME,
+}
 
 
 def _entry() -> MockConfigEntry:
     return MockConfigEntry(domain=DOMAIN, entry_id=ENTRY_ID)
+
+
+def _real_entry(hass) -> MockConfigEntry:
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        entry_id=ENTRY_ID,
+        data=ENTRY_DATA,
+    )
+    entry.add_to_hass(hass)
+    return entry
+
+
+def _valid_custom_component_paths() -> list[str]:
+    return [path for path in custom_components.__path__ if Path(path).is_dir()]
 
 
 def _property(
@@ -145,12 +179,11 @@ async def test_invalid_timestamp_does_not_emit_or_advance_cursor(
     coordinator.async_set_updated_data(
         {"doorbell": _property("doorbell", True, invalid_timestamp)}
     )
-    assert writes.call_count == 0
-
-    coordinator.async_set_updated_data(
-        {"doorbell": _property("doorbell", True, 150)}
-    )
     assert writes.call_count == 1
+    assert entity.state is None
+
+    coordinator.async_set_updated_data({"doorbell": _property("doorbell", True, 150)})
+    assert writes.call_count == 2
     assert entity.state_attributes == {"event_type": DoorbellEventType.RING}
 
 
@@ -171,8 +204,30 @@ async def test_same_or_older_timestamp_does_not_emit(
         {"doorbell": _property("doorbell", False, timestamp_ms)}
     )
 
-    assert writes.call_count == 0
+    assert writes.call_count == 1
     assert entity.state is None
+
+
+async def test_unchanged_single_and_unlock_sources_publish_one_state_write(
+    hass,
+) -> None:
+    """No-event updates delegate exactly one availability write per entity."""
+    current_data = {
+        "doorbell": _property("doorbell", True, 100),
+        "unlock_card": _property("unlock_card", 7, 100),
+    }
+    coordinator, entities = await _setup_entities(hass, current_data)
+    doorbell = _entity_by_unique_id(entities, f"{DEVICE_ID}_doorbell")
+    unlock = _entity_by_unique_id(entities, f"{DEVICE_ID}_unlocked")
+    doorbell_writes = await _add_to_hass(doorbell, hass)
+    unlock_writes = await _add_to_hass(unlock, hass)
+
+    coordinator.async_set_updated_data(current_data)
+
+    assert doorbell_writes.call_count == 1
+    assert unlock_writes.call_count == 1
+    assert doorbell.state is None
+    assert unlock.state is None
 
 
 async def test_each_newer_doorbell_timestamp_emits_ring_even_if_value_repeats(
@@ -184,28 +239,18 @@ async def test_each_newer_doorbell_timestamp_emits_ring_even_if_value_repeats(
         {"doorbell": _property("doorbell", True, 100)},
     )
     entity = _entity_by_unique_id(entities, f"{DEVICE_ID}_doorbell")
-    observed_events: list[tuple[object, Mapping[str, object]]] = []
     await _add_to_hass(entity, hass)
-    entity.async_write_ha_state = Mock(
-        side_effect=lambda: observed_events.append(
-            (entity.state, dict(entity.state_attributes))
-        )
-    )
+    trigger_event = Mock(wraps=entity._trigger_event)
+    entity._trigger_event = trigger_event
+    entity.async_write_ha_state = Mock()
 
-    coordinator.async_set_updated_data(
-        {"doorbell": _property("doorbell", True, 101)}
-    )
-    coordinator.async_set_updated_data(
-        {"doorbell": _property("doorbell", True, 101)}
-    )
-    coordinator.async_set_updated_data(
-        {"doorbell": _property("doorbell", True, 102)}
-    )
+    coordinator.async_set_updated_data({"doorbell": _property("doorbell", True, 101)})
+    coordinator.async_set_updated_data({"doorbell": _property("doorbell", True, 101)})
+    coordinator.async_set_updated_data({"doorbell": _property("doorbell", True, 102)})
 
-    assert [attributes for _, attributes in observed_events] == [
-        {"event_type": DoorbellEventType.RING},
-        {"event_type": DoorbellEventType.RING},
-    ]
+    assert trigger_event.call_count == 2
+    assert entity.async_write_ha_state.call_count == 3
+    assert entity.state_attributes == {"event_type": DoorbellEventType.RING}
 
 
 async def test_doorbell_declares_standard_device_class_and_ring_type(hass) -> None:
@@ -395,6 +440,172 @@ async def test_unlock_uses_one_cursor_per_code_and_orders_simultaneous_events(
         }
     )
 
-    assert observed_events == [
-        {"event_type": "fingerprint", "credential_id": 31}
-    ]
+    assert observed_events == [{"event_type": "fingerprint", "credential_id": 31}]
+
+
+async def test_real_entry_lifecycle_publishes_availability_and_restores_events(
+    hass,
+    caplog,
+) -> None:
+    """Real HA setup publishes availability and reloads without event replay."""
+    entry = _real_entry(hass)
+    current_data = {
+        "doorbell": _property("doorbell", True, 100),
+        "open_inside": _property("open_inside", True, 100),
+        "alarm_lock": _property("alarm_lock", "seed", 100),
+        "unlock_card": _property("unlock_card", 7, 100),
+    }
+    api = AsyncMock()
+    api.async_get_properties.return_value = current_data
+    state_changes = []
+
+    with (
+        patch.object(
+            custom_components,
+            "__path__",
+            _valid_custom_component_paths(),
+        ),
+        patch(
+            "custom_components.tuya_smart_lock.TuyaCloudApi",
+            return_value=api,
+        ),
+    ):
+        assert await hass.config_entries.async_setup(entry.entry_id) is True
+        await hass.async_block_till_done()
+
+        registry = er.async_get(hass)
+        entity_ids = {
+            unique_key: registry.async_get_entity_id(
+                "event",
+                DOMAIN,
+                f"{DEVICE_ID}_{unique_key}",
+            )
+            for unique_key in (
+                "doorbell",
+                "opened_inside",
+                "lock_alarm",
+                "unlocked",
+            )
+        }
+        assert all(entity_ids.values())
+        assert all(
+            hass.states.get(entity_id).state == STATE_UNKNOWN
+            for entity_id in entity_ids.values()
+        )
+
+        doorbell_entity_id = entity_ids["doorbell"]
+        unsubscribe = async_track_state_change_event(
+            hass,
+            [doorbell_entity_id],
+            state_changes.append,
+        )
+        runtime = hass.data[DOMAIN][entry.entry_id]
+        original_coordinator = runtime.coordinator
+        assert original_coordinator._listeners
+        assert original_coordinator._unsub_refresh is not None
+
+        current_data = {
+            **current_data,
+            "doorbell": _property("doorbell", True, 101),
+        }
+        original_coordinator.async_set_updated_data(current_data)
+        await hass.async_block_till_done()
+
+        emitted_state = hass.states.get(doorbell_entity_id).state
+        assert emitted_state not in (STATE_UNKNOWN, STATE_UNAVAILABLE)
+        assert hass.states.get(doorbell_entity_id).attributes["event_type"] == "ring"
+        assert state_changes[-1].data["new_state"].state == emitted_state
+
+        states_before_failure = {
+            entity_id: hass.states.get(entity_id).state
+            for entity_id in entity_ids.values()
+        }
+        original_coordinator.async_set_update_error(UpdateFailed("offline"))
+        await hass.async_block_till_done()
+
+        assert all(
+            hass.states.get(entity_id).state == STATE_UNAVAILABLE
+            for entity_id in entity_ids.values()
+        )
+        assert state_changes[-1].data["new_state"].state == STATE_UNAVAILABLE
+
+        original_coordinator.async_set_updated_data(current_data)
+        await hass.async_block_till_done()
+
+        assert {
+            entity_id: hass.states.get(entity_id).state
+            for entity_id in entity_ids.values()
+        } == states_before_failure
+        assert hass.states.get(doorbell_entity_id).attributes["event_type"] == "ring"
+        assert state_changes[-1].data["new_state"].state == emitted_state
+
+        api.async_get_properties.return_value = current_data
+        assert await hass.config_entries.async_reload(entry.entry_id) is True
+        await hass.async_block_till_done()
+
+        assert original_coordinator._listeners == {}
+        assert original_coordinator._unsub_refresh is None
+        assert original_coordinator._shutdown_requested is True
+        assert hass.states.get(doorbell_entity_id).state == emitted_state
+        assert hass.states.get(doorbell_entity_id).attributes["event_type"] == "ring"
+
+        reloaded_coordinator = hass.data[DOMAIN][entry.entry_id].coordinator
+        assert reloaded_coordinator is not original_coordinator
+        reloaded_coordinator.async_set_updated_data(current_data)
+        await hass.async_block_till_done()
+
+        assert hass.states.get(doorbell_entity_id).state == emitted_state
+        assert hass.states.get(doorbell_entity_id).attributes["event_type"] == "ring"
+
+        assert await hass.config_entries.async_unload(entry.entry_id) is True
+        await hass.async_block_till_done()
+        unsubscribe()
+
+    assert entry.entry_id not in hass.data[DOMAIN]
+    assert all(
+        entity_id not in platform.entities
+        for platform in async_get_platforms(hass, DOMAIN)
+        for entity_id in entity_ids.values()
+    )
+    # HA keeps entity-registry placeholders after unload, but no live entities.
+    assert all(
+        (state := hass.states.get(entity_id)).state == STATE_UNAVAILABLE
+        and state.attributes[ATTR_RESTORED] is True
+        for entity_id in entity_ids.values()
+    )
+    assert reloaded_coordinator._listeners == {}
+    assert reloaded_coordinator._unsub_refresh is None
+    assert reloaded_coordinator._shutdown_requested is True
+    assert ENTRY_DATA[CONF_ACCESS_ID] not in caplog.text
+    assert ENTRY_DATA[CONF_ACCESS_SECRET] not in caplog.text
+
+
+async def test_event_property_and_credential_values_are_not_logged(
+    hass,
+    caplog,
+) -> None:
+    """Coordinator event handling never logs Tuya event payload values."""
+    credential_id = 887_766_554_433
+    alarm_reason = "alarm-secret-do-not-log"
+    coordinator, entities = await _setup_entities(
+        hass,
+        {
+            "alarm_lock": _property("alarm_lock", "seed", 100),
+            "unlock_card": _property("unlock_card", 7, 100),
+        },
+    )
+    alarm = _entity_by_unique_id(entities, f"{DEVICE_ID}_lock_alarm")
+    unlock = _entity_by_unique_id(entities, f"{DEVICE_ID}_unlocked")
+    await _add_to_hass(alarm, hass)
+    await _add_to_hass(unlock, hass)
+    caplog.set_level("DEBUG")
+
+    coordinator.async_set_updated_data(
+        {
+            "alarm_lock": _property("alarm_lock", alarm_reason, 101),
+            "unlock_card": _property("unlock_card", credential_id, 101),
+        }
+    )
+
+    assert alarm_reason not in caplog.text
+    assert str(credential_id) not in caplog.text
