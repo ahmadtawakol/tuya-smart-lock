@@ -250,7 +250,7 @@ async def test_command_exposes_transition_and_calls_operate_lock(
     entity = _entity(hass, api, _motor_property(not open_value))
 
     with patch(
-        "custom_components.tuya_smart_lock.lock.asyncio.sleep",
+        "custom_components.tuya_smart_lock.lock.async_sleep",
         new=AsyncMock(),
     ) as sleep:
         task = asyncio.create_task(getattr(entity, method_name)())
@@ -270,6 +270,144 @@ async def test_command_exposes_transition_and_calls_operate_lock(
     assert getattr(entity, transition_property) is False
     assert entity.is_locked is (not open_value)
     assert entity.async_write_ha_state.call_count >= 2
+
+
+async def test_opposite_commands_are_serialized_through_confirmation(hass) -> None:
+    """A second command waits for the first command's complete lifecycle."""
+    api = AsyncMock()
+    first_api_started = asyncio.Event()
+    release_first_api = asyncio.Event()
+    first_confirmation_started = asyncio.Event()
+    release_first_confirmation = asyncio.Event()
+    second_api_started = asyncio.Event()
+    release_second_api = asyncio.Event()
+    operations: list[bool] = []
+
+    async def operate_lock(device_id: str, *, open_: bool) -> None:
+        assert device_id == DEVICE_ID
+        operations.append(open_)
+        if open_:
+            second_api_started.set()
+            await release_second_api.wait()
+            return
+        first_api_started.set()
+        await release_first_api.wait()
+
+    api.async_operate_lock.side_effect = operate_lock
+    api.async_get_properties.side_effect = [
+        _motor_property(False),
+        _motor_property(True),
+    ]
+    entity = _entity(hass, api, _motor_property(True))
+    first_task = None
+
+    async def controlled_sleep(delay: int) -> None:
+        assert delay == 2
+        if asyncio.current_task() is first_task:
+            first_confirmation_started.set()
+            await release_first_confirmation.wait()
+
+    with patch(
+        "custom_components.tuya_smart_lock.lock.async_sleep",
+        side_effect=controlled_sleep,
+    ):
+        first_task = asyncio.create_task(entity.async_lock())
+        await first_api_started.wait()
+        assert entity.is_locking is True
+        assert entity.is_unlocking is False
+
+        second_task = asyncio.create_task(entity.async_unlock())
+        try:
+            await asyncio.sleep(0)
+            assert second_api_started.is_set() is False
+            assert operations == [False]
+            assert entity.is_locking is True
+            assert entity.is_unlocking is False
+
+            release_first_api.set()
+            await first_confirmation_started.wait()
+            assert second_api_started.is_set() is False
+            assert entity.is_locking is True
+            assert entity.is_unlocking is False
+
+            release_first_confirmation.set()
+            await second_api_started.wait()
+            assert first_task.done() is True
+            assert operations == [False, True]
+            assert entity.is_locking is False
+            assert entity.is_unlocking is True
+
+            release_second_api.set()
+            await asyncio.gather(first_task, second_task)
+        finally:
+            release_first_api.set()
+            release_first_confirmation.set()
+            release_second_api.set()
+            await asyncio.gather(
+                first_task,
+                second_task,
+                return_exceptions=True,
+            )
+
+    assert operations == [False, True]
+    assert entity.is_locking is False
+    assert entity.is_unlocking is False
+
+
+async def test_cancelling_command_waiting_for_serialization_preserves_flags(
+    hass,
+) -> None:
+    """Cancelling a queued command cannot disturb the active transition."""
+    api = AsyncMock()
+    first_api_started = asyncio.Event()
+    release_first_api = asyncio.Event()
+    release_second_api = asyncio.Event()
+    operations: list[bool] = []
+
+    async def operate_lock(device_id: str, *, open_: bool) -> None:
+        assert device_id == DEVICE_ID
+        operations.append(open_)
+        if open_:
+            await release_second_api.wait()
+            return
+        first_api_started.set()
+        await release_first_api.wait()
+
+    api.async_operate_lock.side_effect = operate_lock
+    api.async_get_properties.return_value = _motor_property(False)
+    entity = _entity(hass, api, _motor_property(True))
+
+    with patch(
+        "custom_components.tuya_smart_lock.lock.async_sleep",
+        new=AsyncMock(),
+    ):
+        first_task = asyncio.create_task(entity.async_lock())
+        await first_api_started.wait()
+        second_task = asyncio.create_task(entity.async_unlock())
+        try:
+            await asyncio.sleep(0)
+
+            second_task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await second_task
+
+            assert operations == [False]
+            assert entity.is_locking is True
+            assert entity.is_unlocking is False
+
+            release_first_api.set()
+            await first_task
+        finally:
+            release_first_api.set()
+            release_second_api.set()
+            await asyncio.gather(
+                first_task,
+                second_task,
+                return_exceptions=True,
+            )
+
+    assert entity.is_locking is False
+    assert entity.is_unlocking is False
 
 
 async def test_confirmation_refreshes_at_cumulative_two_five_and_ten_seconds(
@@ -296,7 +434,7 @@ async def test_confirmation_refreshes_at_cumulative_two_five_and_ten_seconds(
     entity = _entity(hass, api, initial)
 
     with patch(
-        "custom_components.tuya_smart_lock.lock.asyncio.sleep",
+        "custom_components.tuya_smart_lock.lock.async_sleep",
         new=AsyncMock(),
     ) as sleep:
         with pytest.raises(
@@ -320,7 +458,7 @@ async def test_confirmation_stops_after_first_exact_matching_refresh(hass) -> No
     entity = _entity(hass, api, _motor_property(False))
 
     with patch(
-        "custom_components.tuya_smart_lock.lock.asyncio.sleep",
+        "custom_components.tuya_smart_lock.lock.async_sleep",
         new=AsyncMock(),
     ) as sleep:
         await entity.async_unlock()
@@ -340,7 +478,7 @@ async def test_non_boolean_matching_value_does_not_confirm(hass) -> None:
     entity = _entity(hass, api, _motor_property(False))
 
     with patch(
-        "custom_components.tuya_smart_lock.lock.asyncio.sleep",
+        "custom_components.tuya_smart_lock.lock.async_sleep",
         new=AsyncMock(),
     ) as sleep:
         await entity.async_unlock()
@@ -373,7 +511,7 @@ async def test_api_errors_are_sanitized_and_preserve_confirmed_state(
 
     with (
         patch(
-            "custom_components.tuya_smart_lock.lock.asyncio.sleep",
+            "custom_components.tuya_smart_lock.lock.async_sleep",
             new=AsyncMock(),
         ) as sleep,
         pytest.raises(
@@ -407,7 +545,7 @@ async def test_failed_refresh_cannot_confirm_from_retained_matching_data(
     entity = _entity(hass, api, initial)
 
     with patch(
-        "custom_components.tuya_smart_lock.lock.asyncio.sleep",
+        "custom_components.tuya_smart_lock.lock.async_sleep",
         new=AsyncMock(),
     ) as sleep:
         with pytest.raises(HomeAssistantError):
@@ -434,7 +572,7 @@ async def test_failed_refresh_then_successful_match_confirms(hass) -> None:
     entity = _entity(hass, api, initial)
 
     with patch(
-        "custom_components.tuya_smart_lock.lock.asyncio.sleep",
+        "custom_components.tuya_smart_lock.lock.async_sleep",
         new=AsyncMock(),
     ) as sleep:
         await entity.async_lock()
@@ -463,7 +601,7 @@ async def test_unconfirmed_commands_always_clear_transition_flags(
     entity = _entity(hass, api, unchanged)
 
     with patch(
-        "custom_components.tuya_smart_lock.lock.asyncio.sleep",
+        "custom_components.tuya_smart_lock.lock.async_sleep",
         new=AsyncMock(),
     ):
         with pytest.raises(HomeAssistantError):

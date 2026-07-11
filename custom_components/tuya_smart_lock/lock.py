@@ -1,6 +1,7 @@
 """Lock entity for Tuya Smart Lock."""
 
-import asyncio
+from asyncio import Lock
+from asyncio import sleep as async_sleep
 from typing import Any
 
 from homeassistant.components.lock import LockEntity
@@ -62,6 +63,7 @@ class TuyaSmartLock(TuyaSmartLockEntity, LockEntity):
         self._attr_unique_id = f"tuya_smart_lock_{device_id}"
         self._attr_is_locking = False
         self._attr_is_unlocking = False
+        self._operation_lock = Lock()
 
     @property
     def is_locked(self) -> bool | None:
@@ -105,30 +107,31 @@ class TuyaSmartLock(TuyaSmartLockEntity, LockEntity):
 
     async def _async_operate(self, *, open_: bool) -> None:
         """Send a lock command and confirm the resulting motor state."""
-        self._attr_is_locking = not open_
-        self._attr_is_unlocking = open_
-        self.async_write_ha_state()
-
-        try:
-            try:
-                await self.coordinator.api.async_operate_lock(
-                    self._device_id,
-                    open_=open_,
-                )
-            except TuyaApiError:
-                raise HomeAssistantError(COMMAND_ERROR) from None
-
-            for delay in CONFIRMATION_DELAYS:
-                await asyncio.sleep(delay)
-                await self.coordinator.async_refresh()
-                if (
-                    self.coordinator.last_update_success
-                    and self._motor_state is open_
-                ):
-                    return
-
-            raise HomeAssistantError(CONFIRMATION_ERROR)
-        finally:
-            self._attr_is_locking = False
-            self._attr_is_unlocking = False
+        async with self._operation_lock:
+            self._attr_is_locking = not open_
+            self._attr_is_unlocking = open_
             self.async_write_ha_state()
+
+            try:
+                try:
+                    await self.coordinator.api.async_operate_lock(
+                        self._device_id,
+                        open_=open_,
+                    )
+                except TuyaApiError:
+                    raise HomeAssistantError(COMMAND_ERROR) from None
+
+                for delay in CONFIRMATION_DELAYS:
+                    await async_sleep(delay)
+                    await self.coordinator.async_refresh()
+                    if (
+                        self.coordinator.last_update_success
+                        and self._motor_state is open_
+                    ):
+                        return
+
+                raise HomeAssistantError(CONFIRMATION_ERROR)
+            finally:
+                self._attr_is_locking = False
+                self._attr_is_unlocking = False
+                self.async_write_ha_state()
