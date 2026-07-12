@@ -62,32 +62,79 @@ def test_readme_publishes_hacs_custom_repository_installation() -> None:
 
     assert hacs_badge in hacs_section
     hacs_text = " ".join(hacs_section.split())
-    expected_order = (
-        "Home Assistant 2026.7.2 or newer",
-        "open HACS",
-        "upper-right three-dot menu",
-        "**Custom repositories**",
-        REPOSITORY,
-        "**Integration**",
-        "**Add**",
-        "Open **Tuya Smart Lock** in HACS",
-        "**Download**",
-        "Restart Home Assistant",
-        "Settings > Devices & services",
-        "Future published releases appear as updates in HACS.",
-        "**Settings > Updates**",
-        "**Install**",
-        "**Pending updates**",
-        "three-dot menu",
-        "**Redownload**",
-        "restart Home Assistant afterward",
-    )
-    cursor = 0
-    for phrase in expected_order:
-        position = hacs_text.find(phrase, cursor)
-        assert position >= 0, f"Missing or out of order: {phrase}"
-        cursor = position + len(phrase)
 
+    def assert_ordered(text: str, phrases: tuple[str, ...]) -> None:
+        """Assert that every phrase appears in sequence within one path."""
+        cursor = 0
+        for phrase in phrases:
+            position = text.find(phrase, cursor)
+            assert position >= 0, f"Missing or out of order: {phrase}"
+            cursor = position + len(phrase)
+
+    badge_marker = "**Badge:**"
+    manual_marker = "**Manual:**"
+    common_marker = "After either path"
+    assert badge_marker in hacs_text
+    assert manual_marker in hacs_text
+    assert common_marker in hacs_text
+
+    badge_path = hacs_text.split(badge_marker, maxsplit=1)[1].split(
+        manual_marker, maxsplit=1
+    )[0]
+    manual_path = hacs_text.split(manual_marker, maxsplit=1)[1].split(
+        common_marker, maxsplit=1
+    )[0]
+    common_path = hacs_text.split(common_marker, maxsplit=1)[1].split(
+        "Future published releases appear as updates in HACS.", maxsplit=1
+    )[0]
+    update_path = hacs_text.split(
+        "Future published releases appear as updates in HACS.", maxsplit=1
+    )[1]
+
+    assert_ordered(
+        badge_path,
+        (
+            "Select the button above",
+            "opens the Tuya Smart Lock repository directly in HACS",
+            "Skip the custom-repository URL, type, and **Add** dialog",
+            "**Download**",
+        ),
+    )
+    assert_ordered(
+        manual_path,
+        (
+            "Open HACS",
+            "upper-right three-dot menu",
+            "**Custom repositories**",
+            REPOSITORY,
+            "**Integration**",
+            "**Add**",
+            "open **Tuya Smart Lock** in HACS",
+        ),
+    )
+    assert_ordered(
+        common_path,
+        (
+            "Tuya Smart Lock repository page",
+            "**Download**",
+            "Restart Home Assistant",
+            "Settings > Devices & services",
+        ),
+    )
+    assert_ordered(
+        update_path,
+        (
+            "**Settings > Updates**",
+            "**Install**",
+            "**Pending update** status",
+            "three-dot menu",
+            "**Redownload**",
+            "restart Home Assistant afterward",
+        ),
+    )
+
+    assert "Home Assistant 2026.7.2 or newer" in hacs_text
+    assert "**Pending updates**" not in hacs_text
     assert (
         "This repository is installed as a HACS custom repository; "
         "it is not listed in the HACS default catalog."

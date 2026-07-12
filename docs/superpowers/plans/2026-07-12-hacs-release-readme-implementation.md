@@ -153,19 +153,101 @@ HACS_MY_LINK = (
 )
 
 
-def test_readme_documents_release_backed_hacs_installation() -> None:
+def test_readme_publishes_hacs_custom_repository_installation() -> None:
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
-    assert HACS_MY_LINK in readme
-    assert "https://my.home-assistant.io/badges/hacs_repository.svg" in readme
-    assert REPOSITORY in readme
-    assert "**Integration**" in readme
-    assert "Home Assistant 2026.7.2 or newer" in readme
-    assert "Restart Home Assistant" in readme
-    assert "Settings > Devices & services" in readme
-    assert "Future published releases appear as updates in HACS" in readme
+
+    hacs_section = readme.split("### HACS custom repository (recommended)", maxsplit=1)[
+        1
+    ].split("### Manual", maxsplit=1)[0]
+    hacs_badge = (
+        "[![Open your Home Assistant instance and add this repository to HACS.]"
+        "(https://my.home-assistant.io/badges/hacs_repository.svg)]"
+        f"({HACS_MY_LINK})"
+    )
+    assert hacs_badge in hacs_section
+
+    hacs_text = " ".join(hacs_section.split())
+
+    def assert_ordered(text: str, phrases: tuple[str, ...]) -> None:
+        cursor = 0
+        for phrase in phrases:
+            position = text.find(phrase, cursor)
+            assert position >= 0, f"Missing or out of order: {phrase}"
+            cursor = position + len(phrase)
+
+    badge_marker = "**Badge:**"
+    manual_marker = "**Manual:**"
+    common_marker = "After either path"
+    assert badge_marker in hacs_text
+    assert manual_marker in hacs_text
+    assert common_marker in hacs_text
+
+    badge_path = hacs_text.split(badge_marker, maxsplit=1)[1].split(
+        manual_marker, maxsplit=1
+    )[0]
+    manual_path = hacs_text.split(manual_marker, maxsplit=1)[1].split(
+        common_marker, maxsplit=1
+    )[0]
+    common_path = hacs_text.split(common_marker, maxsplit=1)[1].split(
+        "Future published releases appear as updates in HACS.", maxsplit=1
+    )[0]
+    update_path = hacs_text.split(
+        "Future published releases appear as updates in HACS.", maxsplit=1
+    )[1]
+
+    assert_ordered(
+        badge_path,
+        (
+            "Select the button above",
+            "opens the Tuya Smart Lock repository directly in HACS",
+            "Skip the custom-repository URL, type, and **Add** dialog",
+            "**Download**",
+        ),
+    )
+    assert_ordered(
+        manual_path,
+        (
+            "Open HACS",
+            "upper-right three-dot menu",
+            "**Custom repositories**",
+            REPOSITORY,
+            "**Integration**",
+            "**Add**",
+            "open **Tuya Smart Lock** in HACS",
+        ),
+    )
+    assert_ordered(
+        common_path,
+        (
+            "Tuya Smart Lock repository page",
+            "**Download**",
+            "Restart Home Assistant",
+            "Settings > Devices & services",
+        ),
+    )
+    assert_ordered(
+        update_path,
+        (
+            "**Settings > Updates**",
+            "**Install**",
+            "**Pending update** status",
+            "three-dot menu",
+            "**Redownload**",
+            "restart Home Assistant afterward",
+        ),
+    )
+
+    assert "Home Assistant 2026.7.2 or newer" in hacs_text
+    assert "**Pending updates**" not in hacs_text
+    assert (
+        "This repository is installed as a HACS custom repository; "
+        "it is not listed in the HACS default catalog."
+    ) in hacs_text
     assert "not installable from HACS yet" not in readme
     assert "Neither default-branch publication" not in readme
-    assert "HACS default" not in readme
+    assert "available in the HACS default catalog" not in readme
+    assert "included in the HACS default catalog" not in readme
+    assert "included in HACS defaults" not in readme
 ```
 
 Extend the manifest metadata test:
@@ -178,13 +260,13 @@ assert f"v{manifest['version']}" == "v1.1.0"
 
 ```bash
 /Users/twkl/Github/tuya-smart-lock/.venv/bin/python -m pytest \
-  tests/test_manifest_and_translations.py::test_readme_documents_release_backed_hacs_installation \
+  tests/test_manifest_and_translations.py::test_readme_publishes_hacs_custom_repository_installation \
   tests/test_manifest_and_translations.py::test_manifest_describes_release_and_fork_ownership \
   -q
 ```
 
-Expected: README assertions fail because the one-click link and upgrade wording
-are absent and stale publication wording remains.
+Expected: README assertions fail because the badge and manual paths are not yet
+separated and the current Download and update actions are absent.
 
 - [ ] **Step 3: Rewrite the README installation section**
 
@@ -195,18 +277,31 @@ Make HACS the recommended method:
 
 ### HACS custom repository (recommended)
 
-[![Open your Home Assistant instance and open this repository in HACS.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=ahmadtawakol&repository=tuya-smart-lock&category=integration)
+[![Open your Home Assistant instance and add this repository to HACS.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=ahmadtawakol&repository=tuya-smart-lock&category=integration)
 
-1. Verify Home Assistant 2026.7.2 or newer is installed.
-2. Use the button above, or open HACS, select **Custom repositories**, add
-   `https://github.com/ahmadtawakol/tuya-smart-lock`, and choose
-   **Integration**.
-3. Install **Tuya Smart Lock**.
-4. Restart Home Assistant.
-5. Open **Settings > Devices & services > Add integration** and select
-   **Tuya Smart Lock**.
+This repository is installed as a HACS custom repository; it is not listed in
+the HACS default catalog.
 
-Future published releases appear as updates in HACS.
+1. Verify that you are running Home Assistant 2026.7.2 or newer.
+2. Choose one path to open the repository:
+   - **Badge:** Select the button above. It opens the Tuya Smart Lock repository
+     directly in HACS. Skip the custom-repository URL, type, and **Add** dialog
+     and continue with **Download** below.
+   - **Manual:** Open HACS, select the upper-right three-dot menu, then select
+     **Custom repositories**. Enter
+     `https://github.com/ahmadtawakol/tuya-smart-lock`, choose **Integration**,
+     select **Add**, then open **Tuya Smart Lock** in HACS.
+
+After either path, on the Tuya Smart Lock repository page:
+
+1. Select **Download**.
+2. Restart Home Assistant.
+3. Go to **Settings > Devices & services > Add integration > Tuya Smart Lock**.
+
+Future published releases appear as updates in HACS. Install an update from
+**Settings > Updates** by selecting **Install**. Alternatively, in HACS find
+Tuya Smart Lock with the **Pending update** status, open its three-dot menu, and
+select **Redownload**. After using either path, restart Home Assistant afterward.
 ```
 
 Retain manual installation as fallback. Remove branch/release planning language

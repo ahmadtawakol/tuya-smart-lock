@@ -74,19 +74,25 @@ This repository is installed as a HACS custom repository; it is not listed in
 the HACS default catalog.
 
 1. Verify that you are running Home Assistant 2026.7.2 or newer.
-2. Use the badge above, or manually open HACS, select the upper-right three-dot
-   menu, then select **Custom repositories**.
-3. In the custom repository dialog, enter
-   `https://github.com/ahmadtawakol/tuya-smart-lock`, choose **Integration**,
-   then select **Add**.
-4. Open **Tuya Smart Lock** in HACS and select **Download**.
-5. Restart Home Assistant.
-6. Go to **Settings > Devices & services > Add integration > Tuya Smart Lock**.
+2. Choose one path to open the repository:
+   - **Badge:** Select the button above. It opens the Tuya Smart Lock repository
+     directly in HACS. Skip the custom-repository URL, type, and **Add** dialog
+     and continue with **Download** below.
+   - **Manual:** Open HACS, select the upper-right three-dot menu, then select
+     **Custom repositories**. Enter
+     `https://github.com/ahmadtawakol/tuya-smart-lock`, choose **Integration**,
+     select **Add**, then open **Tuya Smart Lock** in HACS.
+
+After either path, on the Tuya Smart Lock repository page:
+
+1. Select **Download**.
+2. Restart Home Assistant.
+3. Go to **Settings > Devices & services > Add integration > Tuya Smart Lock**.
 
 Future published releases appear as updates in HACS. Install an update from
-**Settings > Updates** by selecting **Install**. Alternatively, in HACS open
-**Pending updates**, open the three-dot menu for **Tuya Smart Lock**, and select
-**Redownload**. After using either path, restart Home Assistant afterward.
+**Settings > Updates** by selecting **Install**. Alternatively, in HACS find
+Tuya Smart Lock with the **Pending update** status, open its three-dot menu, and
+select **Redownload**. After using either path, restart Home Assistant afterward.
 
 ### Manual installation (fallback)
 
