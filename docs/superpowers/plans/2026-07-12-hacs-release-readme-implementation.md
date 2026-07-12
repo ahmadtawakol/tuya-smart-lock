@@ -351,11 +351,10 @@ if git show-ref --verify --quiet refs/tags/v1.1.0; then
   echo "Local tag v1.1.0 already exists; aborting" >&2
   exit 1
 fi
-REMOTE_TAG=$(git ls-remote --tags origin refs/tags/v1.1.0)
-if [ -n "$REMOTE_TAG" ]; then
-  echo "Remote tag v1.1.0 already exists; aborting" >&2
-  exit 1
-fi
+REMOTE_TAG_COUNT=$(gh api \
+  repos/ahmadtawakol/tuya-smart-lock/git/matching-refs/tags/v1.1.0 \
+  --jq 'length')
+test "$REMOTE_TAG_COUNT" = "0"
 RELEASE_TAGS=$(gh release list \
   --repo ahmadtawakol/tuya-smart-lock \
   --limit 100 \
@@ -377,18 +376,25 @@ Run this step from the primary checkout at
 
 ```bash
 cd /Users/twkl/Github/tuya-smart-lock
+set -euo pipefail
 test "$(git branch --show-current)" = "main"
 git pull --ff-only origin main
+PRIMARY_STATUS=$(git status --porcelain)
+test "$PRIMARY_STATUS" = "?? .worktrees/"
 git merge --ff-only codex/hacs-release-readme
+test -z "$(git status --porcelain)"
 /Users/twkl/Github/tuya-smart-lock/.venv/bin/python -m pytest -q
 /Users/twkl/Github/tuya-smart-lock/.venv/bin/python -m ruff check .
 /Users/twkl/Github/tuya-smart-lock/.venv/bin/python -m ruff format --check .
 git diff --check origin/main...HEAD
 ```
 
-Expected: fast-forward and green checks. If `main` changed and fast-forward is
-impossible, stop and reconcile on the feature branch; do not create an
-unreviewed merge commit.
+Before the merge, `?? .worktrees/` is the only allowed status entry. It is
+expected only until the fast-forward brings in the feature branch's tracked
+`.gitignore`; no other tracked or untracked state is allowed. Expected:
+fast-forward, a clean post-merge worktree, and green checks. If `main` changed
+and fast-forward is impossible, stop and reconcile on the feature branch; do
+not create an unreviewed merge commit.
 
 - [ ] **Step 3: Push and record the exact release SHA**
 
@@ -470,11 +476,10 @@ if git show-ref --verify --quiet refs/tags/v1.1.0; then
   echo "Local tag v1.1.0 already exists; aborting" >&2
   exit 1
 fi
-REMOTE_TAG=$(git ls-remote --tags origin refs/tags/v1.1.0)
-if [ -n "$REMOTE_TAG" ]; then
-  echo "Remote tag v1.1.0 already exists; aborting" >&2
-  exit 1
-fi
+REMOTE_TAG_COUNT=$(gh api \
+  repos/ahmadtawakol/tuya-smart-lock/git/matching-refs/tags/v1.1.0 \
+  --jq 'length')
+test "$REMOTE_TAG_COUNT" = "0"
 RELEASE_TAGS=$(gh release list \
   --repo ahmadtawakol/tuya-smart-lock \
   --limit 100 \
