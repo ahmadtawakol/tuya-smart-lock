@@ -23,12 +23,13 @@ and telemetry entities. No Tuya developer subscription is required for new
 setups: there is no developer project, Access ID, Access Secret, IoT Core, or
 Smart Lock Open Service configuration.
 
-Control in `v1.2.0-beta.1` is experimental. The target lock advertises
-`lock_motor_state` as a writable Device Sharing function, so the integration
-sends that standard datapoint and reports success only after the physical state
-changes. Tuya may reject or ignore the command on some locks because its
-documented remote-unlock flow normally uses a privileged security ticket. State
-and telemetry can still work when control is unavailable.
+Control in `v1.2.0` is physically verified for the documented target model. The
+lock advertises `lock_motor_state` as a writable Device Sharing function, so the
+integration sends that standard datapoint and reports success only after the
+physical state changes. Control remains experimental for other models: Tuya may
+reject or ignore the command because its documented remote-unlock flow normally
+uses a privileged security ticket. State and telemetry can still work when
+control is unavailable.
 
 The release target is the `videolock` product model `mredcfxelhrjearc`. Other
 Tuya lock categories remain discoverable, but hardware not listed here has not
@@ -65,7 +66,7 @@ Home Assistant event attributes, but the integration does not write it to logs.
 
 Remote door control is safety-sensitive. Confirm that the mobile app can lock
 and unlock the device before configuring Home Assistant. Keep an authorized
-person at the door and preserve a physical entry method during beta testing.
+person at the door and preserve a physical entry method during initial testing.
 
 ## Installation
 

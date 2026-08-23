@@ -7,7 +7,7 @@
       },
       "select_device": {
         "title": "Select Lock Device",
-        "description": "Choose a lock from the official Tuya integration. Standard Device Sharing control is experimental and every command must be physically confirmed by the lock.",
+        "description": "Choose a lock from the official Tuya integration. Device Sharing control is confirmed for the documented target model and experimental for other locks. Every command must be physically confirmed by the lock.",
         "data": {
           "device_id": "Device"
         }

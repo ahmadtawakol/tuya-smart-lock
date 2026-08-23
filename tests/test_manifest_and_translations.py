@@ -36,7 +36,7 @@ def test_manifest_describes_release_and_fork_ownership() -> None:
     """The integration manifest publishes the intended release metadata."""
     manifest = _load_json(INTEGRATION / "manifest.json")
 
-    assert manifest["version"] == "1.2.0-beta.1"
+    assert manifest["version"] == "1.2.0"
     assert manifest["integration_type"] == "device"
     assert manifest["iot_class"] == "cloud_push"
     assert manifest["config_flow"] is True
@@ -157,8 +157,8 @@ def test_hacs_metadata_requires_supported_home_assistant_release() -> None:
     }
 
 
-def test_readme_defaults_to_free_app_auth_and_labels_control_experimental() -> None:
-    """Documentation cannot drift back to a paid developer-cloud requirement."""
+def test_readme_defaults_to_free_app_auth_and_scopes_verified_control() -> None:
+    """Docs keep free auth and limit verified control to the tested model."""
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
     prerequisites = readme.split("## Prerequisites", maxsplit=1)[1].split(
         "## Installation", maxsplit=1
@@ -166,14 +166,16 @@ def test_readme_defaults_to_free_app_auth_and_labels_control_experimental() -> N
     configuration = readme.split("## Configuration", maxsplit=1)[1].split(
         "## Runtime behavior", maxsplit=1
     )[0]
+    normalized_readme = " ".join(readme.split())
 
     assert "built-in **Tuya** integration" in prerequisites
     assert "QR-code app login" in prerequisites
     assert "IoT Core" not in prerequisites
     assert "Access ID" not in prerequisites
-    assert "No Tuya developer subscription is required" in readme
-    assert "Control in `v1.2.0-beta.1` is experimental" in readme
-    assert "reports success only after the physical state" in readme
+    assert "No Tuya developer subscription is required" in normalized_readme
+    assert "Control in `v1.2.0` is physically verified" in normalized_readme
+    assert "Control remains experimental for other models" in normalized_readme
+    assert "reports success only after the physical state" in normalized_readme
     assert "Reconfigure" in configuration
     assert "Access ID, Access Secret" in configuration
 
