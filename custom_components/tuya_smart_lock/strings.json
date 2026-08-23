@@ -2,17 +2,12 @@
   "config": {
     "step": {
       "user": {
-        "title": "Tuya Cloud Credentials",
-        "description": "Enter your Tuya IoT Platform credentials.\n\nYou need an active **IoT Core** and **Smart Lock Open Service** subscription on [iot.tuya.com]({tuya_iot_url}).",
-        "data": {
-          "access_id": "Access ID",
-          "access_secret": "Access Secret",
-          "api_region": "API Region"
-        }
+        "title": "Use the Tuya or Smart Life app",
+        "description": "This integration reuses Home Assistant's official Tuya app login. No Tuya developer subscription is required."
       },
       "select_device": {
         "title": "Select Lock Device",
-        "description": "Choose the lock device you want to control from Home Assistant.",
+        "description": "Choose a lock from the official Tuya integration. Standard Device Sharing control is experimental and every command must be physically confirmed by the lock.",
         "data": {
           "device_id": "Device"
         }
@@ -25,6 +20,10 @@
           "access_secret": "Access Secret",
           "api_region": "API Region"
         }
+      },
+      "reconfigure_confirm": {
+        "title": "Switch to free Tuya app authentication",
+        "description": "Switch {name} from developer cloud credentials to Home Assistant's official Tuya app session. Existing entity identities will be preserved."
       }
     },
     "error": {
@@ -36,8 +35,13 @@
     },
     "abort": {
       "already_configured": "This device is already configured.",
-      "no_devices_found": "No lock devices found. Make sure your Smart Life / Tuya app account is linked to your IoT project and your device is a supported lock category.",
-      "reauth_successful": "Tuya Cloud credentials were updated successfully."
+      "already_using_official_tuya": "This lock already uses the official Tuya app session.",
+      "migration_device_not_found": "The same lock was not found in the official Tuya integration. Reload the official integration and try again.",
+      "no_devices_found": "No supported locks were found in the official Tuya integration. Confirm the lock appears in the Tuya or Smart Life app, then reload the official integration.",
+      "official_tuya_reauth_started": "Reauthentication was started for the official Tuya integration.",
+      "reconfigure_successful": "The lock now uses free Tuya app authentication.",
+      "reauth_successful": "Tuya Cloud credentials were updated successfully.",
+      "tuya_not_configured": "Set up and load Home Assistant's official Tuya integration with the Tuya or Smart Life app before adding this integration."
     }
   },
   "entity": {

@@ -1,9 +1,11 @@
 """Tuya Smart Lock integration."""
 
+from collections.abc import Callable
 from dataclasses import dataclass
 
-from homeassistant.config_entries import ConfigEntry
+from homeassistant.config_entries import ConfigEntry, ConfigEntryState
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .const import (
@@ -12,10 +14,12 @@ from .const import (
     CONF_API_REGION,
     CONF_DEVICE_ID,
     CONF_DEVICE_NAME,
+    CONF_TUYA_ENTRY_ID,
     DOMAIN,
     PLATFORMS,
 )
-from .coordinator import TuyaSmartLockCoordinator
+from .coordinator import TuyaLockApi, TuyaSmartLockCoordinator
+from .sharing_api import TuyaSharingApi
 from .tuya_api import TuyaCloudApi
 
 
@@ -23,34 +27,60 @@ from .tuya_api import TuyaCloudApi
 class TuyaSmartLockRuntimeData:
     """Typed runtime state shared by Tuya Smart Lock platforms."""
 
-    api: TuyaCloudApi
+    api: TuyaLockApi
     coordinator: TuyaSmartLockCoordinator
     device_id: str
     device_name: str
+    unsubscribe: Callable[[], None] | None = None
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Tuya Smart Lock from a config entry."""
-    session = async_get_clientsession(hass)
-    api = TuyaCloudApi(
-        session,
-        access_id=entry.data[CONF_ACCESS_ID],
-        access_secret=entry.data[CONF_ACCESS_SECRET],
-        region=entry.data[CONF_API_REGION],
-    )
     device_id = entry.data[CONF_DEVICE_ID]
     device_name = entry.data[CONF_DEVICE_NAME]
+    sharing_entry_id = entry.data.get(CONF_TUYA_ENTRY_ID)
+    if isinstance(sharing_entry_id, str):
+        official_entry = hass.config_entries.async_get_entry(sharing_entry_id)
+        if (
+            official_entry is None
+            or official_entry.state is not ConfigEntryState.LOADED
+            or getattr(getattr(official_entry, "runtime_data", None), "manager", None)
+            is None
+        ):
+            raise ConfigEntryNotReady("The official Tuya integration is not loaded.")
+        api: TuyaLockApi = TuyaSharingApi(hass, official_entry, device_id)
+    else:
+        session = async_get_clientsession(hass)
+        api = TuyaCloudApi(
+            session,
+            access_id=entry.data[CONF_ACCESS_ID],
+            access_secret=entry.data[CONF_ACCESS_SECRET],
+            region=entry.data[CONF_API_REGION],
+        )
     coordinator = TuyaSmartLockCoordinator(hass, api, device_id, entry)
 
-    await coordinator.async_config_entry_first_refresh()
-
-    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = TuyaSmartLockRuntimeData(
-        api=api,
-        coordinator=coordinator,
-        device_id=device_id,
-        device_name=device_name,
+    unsubscribe = (
+        api.async_subscribe(coordinator.async_handle_push)
+        if isinstance(sharing_entry_id, str)
+        else None
     )
-    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    setup_complete = False
+    try:
+        await coordinator.async_config_entry_first_refresh()
+        hass.data.setdefault(DOMAIN, {})[entry.entry_id] = TuyaSmartLockRuntimeData(
+            api=api,
+            coordinator=coordinator,
+            device_id=device_id,
+            device_name=device_name,
+            unsubscribe=unsubscribe,
+        )
+        await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+        setup_complete = True
+    finally:
+        if not setup_complete:
+            hass.data.get(DOMAIN, {}).pop(entry.entry_id, None)
+            if unsubscribe is not None:
+                unsubscribe()
     return True
 
 
@@ -58,5 +88,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if unload_ok:
-        hass.data[DOMAIN].pop(entry.entry_id, None)
+        runtime = hass.data[DOMAIN].pop(entry.entry_id, None)
+        if runtime is not None and runtime.unsubscribe is not None:
+            runtime.unsubscribe()
     return unload_ok

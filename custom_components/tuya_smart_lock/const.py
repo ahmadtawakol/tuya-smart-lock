@@ -3,7 +3,6 @@
 from homeassistant.const import Platform
 
 DOMAIN = "tuya_smart_lock"
-TUYA_IOT_PLATFORM_URL = "https://iot.tuya.com"
 
 CONFIRMATION_DELAYS = (2, 3, 5)
 
@@ -19,6 +18,7 @@ CONF_ACCESS_SECRET = "access_secret"
 CONF_DEVICE_ID = "device_id"
 CONF_DEVICE_NAME = "device_name"
 CONF_API_REGION = "api_region"
+CONF_TUYA_ENTRY_ID = "tuya_entry_id"
 
 API_REGIONS = {
     "eu": "openapi.tuyaeu.com",

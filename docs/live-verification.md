@@ -7,9 +7,10 @@ credentials or device identifiers and must stay that way.
 
 - [ ] Keep an authorized person at the door, preserve a physical entry method,
       and avoid testing when a failed lock or unlock could strand someone.
-- [ ] Confirm the Tuya Smart Home cloud project uses the device's data center.
-- [ ] Link the Tuya Smart or Smart Life account that owns the lock.
-- [ ] Authorize active **IoT Core** and **Smart Lock Open Service** services.
+- [ ] Configure Home Assistant's official **Tuya** integration using the User
+      Code and QR-code login from the Tuya or Smart Life app.
+- [ ] Confirm the target lock appears in the official Tuya integration, even if
+      it is marked unsupported or exposes no entities there.
 - [ ] Enable both remote locking and password-free remote unlock/remote control
       in the mobile app.
 - [ ] Confirm manual lock and unlock still work before testing cloud commands.
@@ -18,7 +19,7 @@ credentials or device identifiers and must stay that way.
 
 - [ ] Copy `custom_components/tuya_smart_lock` into the Home Assistant config
       directory, restart Home Assistant, and add **Tuya Smart Lock** from the UI.
-- [ ] Select the API region matching the cloud project's data center.
+- [ ] Select the lock discovered through the official Tuya integration.
 - [ ] Confirm the integration loads without warnings or repeated retries.
 - [ ] Confirm all expected entities are available.
 - [ ] Compare the lock entity's locked/unlocked state with the physical door.
@@ -32,10 +33,12 @@ credentials or device identifiers and must stay that way.
       Home Assistant reports unlocked.
 - [ ] Physically lock it, wait through a polling interval, and confirm Home
       Assistant reports locked.
-- [ ] From a safe position with door access preserved, issue **Unlock** in Home
-      Assistant and confirm both physical movement and the final entity state.
-- [ ] Issue **Lock** in Home Assistant and confirm both physical movement and the
-      final entity state.
+- [ ] From a safe position with door access preserved, issue **Lock** in Home
+      Assistant first and confirm both physical movement and the final entity
+      state. If it is rejected or times out, record that free control is not
+      supported and do not proceed to unlock testing.
+- [ ] Only after locking succeeds, issue **Unlock** while an authorized person
+      remains beside the door and confirm both physical movement and final state.
 - [ ] Verify an inside-open action emits the **Opened inside** event.
 - [ ] Ring the doorbell and verify a **Doorbell** `ring` event.
 - [ ] Trigger only a safe, documented alarm condition and verify the **Lock
@@ -60,7 +63,7 @@ stable enough for the intended automation. Do not paste or publish the value.
 - [ ] Restart Home Assistant after the latest events and verify historical Tuya
       shadow values are not replayed as new events.
 - [ ] Reload the integration and verify historical events are not replayed.
-- [ ] Where safe, cause a temporary network or cloud-refresh failure and confirm
+- [ ] Where safe, cause a temporary network or official-Tuya failure and confirm
       entities become unavailable without exposing sensitive payloads.
 - [ ] Restore connectivity and confirm the integration and entity availability
       recover on a later refresh.
@@ -69,11 +72,11 @@ stable enough for the intended automation. Do not paste or publish the value.
 
 ## Sanitized evidence
 
-- [ ] Record Home Assistant version, integration version, API region, device
-      category/model, timestamps, expected result, and observed result.
+- [ ] Record Home Assistant version, integration version, device category/model,
+      command direction, timestamps, expected result, and observed result.
 - [ ] Capture sanitized diagnostics and only the minimum relevant log lines.
-- [ ] Remove access IDs, access secrets, tokens, tickets, account/device IDs,
-      credential IDs, credential payloads, QR codes, and raw Tuya responses.
+- [ ] Remove access IDs, access secrets, tokens, account/device IDs, credential
+      IDs, credential payloads, QR codes, and raw Tuya responses.
 - [ ] Never paste secrets, tickets, or credential payloads into an issue, chat,
       screenshot, filename, or automation trace.
 

@@ -1,9 +1,11 @@
 """Tests for Tuya Smart Lock integration setup and unloading."""
 
 from importlib import import_module
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
+from homeassistant.config_entries import ConfigEntryState
 from homeassistant.const import Platform
 from homeassistant.exceptions import ConfigEntryNotReady
 from pytest_homeassistant_custom_component.common import MockConfigEntry
@@ -19,6 +21,7 @@ from custom_components.tuya_smart_lock.const import (
     CONF_API_REGION,
     CONF_DEVICE_ID,
     CONF_DEVICE_NAME,
+    CONF_TUYA_ENTRY_ID,
     DOMAIN,
     PLATFORMS,
 )
@@ -39,6 +42,7 @@ EXPECTED_PLATFORMS = (
     Platform.BINARY_SENSOR,
     Platform.EVENT,
 )
+OFFICIAL_ENTRY_ID = "official-tuya-entry"
 
 
 def _entry(hass) -> MockConfigEntry:
@@ -155,6 +159,137 @@ async def test_first_refresh_failure_leaves_no_runtime_or_forwarding(hass) -> No
     forward.assert_not_awaited()
 
 
+async def test_new_setup_reuses_loaded_official_tuya_session(hass) -> None:
+    """Free entries bind to the official Tuya runtime without cloud secrets."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        entry_id="sharing-entry",
+        data={
+            CONF_TUYA_ENTRY_ID: OFFICIAL_ENTRY_ID,
+            CONF_DEVICE_ID: DEVICE_ID,
+            CONF_DEVICE_NAME: DEVICE_NAME,
+        },
+    )
+    entry.add_to_hass(hass)
+    official_entry = MockConfigEntry(
+        domain="tuya",
+        entry_id=OFFICIAL_ENTRY_ID,
+        state=ConfigEntryState.LOADED,
+        data={},
+    )
+    official_entry.runtime_data = SimpleNamespace(manager=Mock(name="manager"))
+    api = Mock(name="sharing_api")
+    unsubscribe = Mock(name="unsubscribe")
+    api.async_subscribe.return_value = unsubscribe
+    coordinator = Mock(name="coordinator")
+    coordinator.async_config_entry_first_refresh = AsyncMock()
+
+    with (
+        patch.object(
+            hass.config_entries,
+            "async_get_entry",
+            return_value=official_entry,
+        ),
+        patch(
+            "custom_components.tuya_smart_lock.TuyaSharingApi",
+            return_value=api,
+        ) as api_class,
+        patch(
+            "custom_components.tuya_smart_lock.TuyaSmartLockCoordinator",
+            return_value=coordinator,
+        ),
+        patch.object(
+            hass.config_entries,
+            "async_forward_entry_setups",
+            new=AsyncMock(),
+        ),
+    ):
+        assert await async_setup_entry(hass, entry) is True
+
+    api_class.assert_called_once_with(hass, official_entry, DEVICE_ID)
+    api.async_subscribe.assert_called_once_with(coordinator.async_handle_push)
+    runtime = hass.data[DOMAIN][entry.entry_id]
+    assert runtime.api is api
+    assert runtime.unsubscribe is unsubscribe
+
+
+@pytest.mark.parametrize(
+    "official_entry",
+    [None, MockConfigEntry(domain="tuya", state=ConfigEntryState.NOT_LOADED, data={})],
+    ids=["missing", "not-loaded"],
+)
+async def test_sharing_setup_waits_for_official_tuya(hass, official_entry) -> None:
+    """Free entries never start against a missing or stale official runtime."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={
+            CONF_TUYA_ENTRY_ID: OFFICIAL_ENTRY_ID,
+            CONF_DEVICE_ID: DEVICE_ID,
+            CONF_DEVICE_NAME: DEVICE_NAME,
+        },
+    )
+    entry.add_to_hass(hass)
+
+    with (
+        patch.object(
+            hass.config_entries,
+            "async_get_entry",
+            return_value=official_entry,
+        ),
+        pytest.raises(ConfigEntryNotReady, match="official Tuya integration"),
+    ):
+        await async_setup_entry(hass, entry)
+
+
+async def test_failed_sharing_refresh_unsubscribes_push_listener(hass) -> None:
+    """A failed setup cannot leak a dispatcher listener or partial runtime."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        entry_id="sharing-entry",
+        data={
+            CONF_TUYA_ENTRY_ID: OFFICIAL_ENTRY_ID,
+            CONF_DEVICE_ID: DEVICE_ID,
+            CONF_DEVICE_NAME: DEVICE_NAME,
+        },
+    )
+    entry.add_to_hass(hass)
+    official_entry = MockConfigEntry(
+        domain="tuya",
+        entry_id=OFFICIAL_ENTRY_ID,
+        state=ConfigEntryState.LOADED,
+        data={},
+    )
+    official_entry.runtime_data = SimpleNamespace(manager=Mock(name="manager"))
+    api = Mock(name="sharing_api")
+    unsubscribe = Mock(name="unsubscribe")
+    api.async_subscribe.return_value = unsubscribe
+    coordinator = Mock(name="coordinator")
+    coordinator.async_config_entry_first_refresh = AsyncMock(
+        side_effect=ConfigEntryNotReady("initial sharing refresh failed")
+    )
+
+    with (
+        patch.object(
+            hass.config_entries,
+            "async_get_entry",
+            return_value=official_entry,
+        ),
+        patch(
+            "custom_components.tuya_smart_lock.TuyaSharingApi",
+            return_value=api,
+        ),
+        patch(
+            "custom_components.tuya_smart_lock.TuyaSmartLockCoordinator",
+            return_value=coordinator,
+        ),
+        pytest.raises(ConfigEntryNotReady, match="initial sharing refresh failed"),
+    ):
+        await async_setup_entry(hass, entry)
+
+    unsubscribe.assert_called_once_with()
+    assert entry.entry_id not in hass.data.get(DOMAIN, {})
+
+
 @pytest.mark.parametrize("unload_ok", [True, False])
 async def test_unload_removes_runtime_only_on_success(hass, unload_ok: bool) -> None:
     """Unload retains runtime data when any platform fails to unload."""
@@ -164,6 +299,7 @@ async def test_unload_removes_runtime_only_on_success(hass, unload_ok: bool) -> 
         coordinator=Mock(name="coordinator"),
         device_id=DEVICE_ID,
         device_name=DEVICE_NAME,
+        unsubscribe=Mock(name="unsubscribe"),
     )
     hass.data[DOMAIN] = {entry.entry_id: runtime}
     unload = AsyncMock(return_value=unload_ok)
@@ -179,5 +315,7 @@ async def test_unload_removes_runtime_only_on_success(hass, unload_ok: bool) -> 
     unload.assert_awaited_once_with(entry, PLATFORMS)
     if unload_ok:
         assert entry.entry_id not in hass.data[DOMAIN]
+        runtime.unsubscribe.assert_called_once_with()
     else:
         assert hass.data[DOMAIN][entry.entry_id] is runtime
+        runtime.unsubscribe.assert_not_called()

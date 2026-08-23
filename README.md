@@ -4,8 +4,9 @@
 [![GitHub Release](https://img.shields.io/github/v/release/ahmadtawakol/tuya-smart-lock?style=flat-square)](https://github.com/ahmadtawakol/tuya-smart-lock/releases)
 [![License](https://img.shields.io/github/license/ahmadtawakol/tuya-smart-lock?style=flat-square)](LICENSE)
 
-A Home Assistant custom integration for controlling and observing supported Tuya
-smart locks through the Tuya Cloud API. This fork adds `videolock` control,
+A Home Assistant custom integration for observing and experimentally controlling
+supported Tuya smart locks through the free app-authenticated session provided by
+Home Assistant's official Tuya integration. It adds a `videolock` lock entity,
 physical-state confirmation, battery and duress telemetry, and lock events.
 
 ## Background and supported target
@@ -15,11 +16,19 @@ This project is a fork of
 The original integration and this fork are distributed under the MIT License;
 see [LICENSE](LICENSE).
 
-Home Assistant's official Tuya integration relies on Tuya device handlers and
-the device-sharing SDK. The `videolock` handler does not expose a controllable
-Home Assistant `lock` platform, and a custom integration cannot add a lock
-platform to that official device handler. This integration instead uses Tuya's
-Smart Lock Open Service and its ticket-based cloud command flow.
+Home Assistant's official Tuya integration relies on Tuya's Device Sharing SDK,
+but deliberately does not expose a Home Assistant `lock` platform. This
+integration reuses that already authenticated SDK session and adds its own lock
+and telemetry entities. No Tuya developer subscription is required for new
+setups: there is no developer project, Access ID, Access Secret, IoT Core, or
+Smart Lock Open Service configuration.
+
+Control in `v1.2.0-beta.1` is experimental. The target lock advertises
+`lock_motor_state` as a writable Device Sharing function, so the integration
+sends that standard datapoint and reports success only after the physical state
+changes. Tuya may reject or ignore the command on some locks because its
+documented remote-unlock flow normally uses a privileged security ticket. State
+and telemetry can still work when control is unavailable.
 
 The release target is the `videolock` product model `mredcfxelhrjearc`. Other
 Tuya lock categories remain discoverable, but hardware not listed here has not
@@ -46,23 +55,17 @@ Home Assistant event attributes, but the integration does not write it to logs.
 1. Run **Home Assistant 2026.7.2 or newer**. Older Home Assistant releases and
    older Python runtimes are unsupported; this integration targets Python 3.14
    or newer.
-2. Create a **Smart Home** cloud project at
-   [Tuya IoT Platform](https://iot.tuya.com).
-3. Select the data center that owns the app account and devices. Choose the
-   integration region that matches it: Europe, Americas, China, or India. The
-   target-device diagnostic used the US data center and **Americas** region.
-4. Under **Devices > Link Tuya App Account**, link the Tuya Smart or Smart Life
-   account that owns the lock and confirm that the device appears in the cloud
-   project.
-5. Under **Service API**, authorize both **IoT Core** and
-   **Smart Lock Open Service**. Renew either service if its trial has expired.
-6. In the lock's Tuya Smart or Smart Life settings, enable remote locking and
+2. Add the lock to the **Tuya Smart** or **Smart Life** mobile app.
+3. Set up Home Assistant's built-in **Tuya** integration using its User Code and
+   QR-code app login. Confirm the lock appears there, even if it is marked
+   unsupported or has no entities.
+4. In the lock's Tuya Smart or Smart Life settings, enable remote locking and
    remote unlock/password-free remote control. Availability and wording depend
    on the lock firmware and app.
-7. Copy the cloud project's **Access ID** and **Access Secret** for setup.
 
 Remote door control is safety-sensitive. Confirm that the mobile app can lock
-and unlock the device before configuring Home Assistant.
+and unlock the device before configuring Home Assistant. Keep an authorized
+person at the door and preserve a physical entry method during beta testing.
 
 ## Installation
 
@@ -108,29 +111,35 @@ select **Redownload**. After using either path, restart Home Assistant afterward
 
 Configuration is UI-only; no YAML is required.
 
-1. Enter the Tuya cloud project's **Access ID**, **Access Secret**, and matching
-   **API Region**.
-2. Select a discovered lock.
-3. The setup flow verifies password-free remote unlock before saving the config
-   entry. Repeat the flow for additional locks.
+1. Configure Home Assistant's official **Tuya** integration with the Tuya or
+   Smart Life app.
+2. Add **Tuya Smart Lock** and select a discovered lock.
+3. Repeat the custom integration flow for additional locks.
 
-The credentials are stored in the Home Assistant config entry. Protect Home
-Assistant backups and configuration storage accordingly. Access secrets, access
-tokens, command tickets, raw Tuya response payloads, and raw credential payloads
-are not logged by this integration.
+New entries store only the official Tuya config-entry ID, device ID, and device
+name. Authentication tokens stay owned by Home Assistant's official Tuya
+integration and are never copied into this custom integration.
+
+Existing `v1.1.0` cloud-credential entries continue to work while their Tuya
+developer subscription remains active. To switch one without changing entity
+identities, open its integration menu, select **Reconfigure**, and confirm the
+matching lock from the official Tuya session. The old Access ID, Access Secret,
+and API region are then removed from that config entry.
 
 ## Runtime behavior and limitations
 
-- This integration is cloud-only; physical lock functions remain available
-  when the internet or Tuya Cloud is unavailable.
-- A shared coordinator polls Tuya's latest shadow properties every 30 seconds.
-  The shadow endpoint exposes the latest property, not a durable event stream,
-  so multiple identical events inside one polling window can collapse into one
-  observed event.
-- Every Tuya HTTP request has a 12-second timeout.
-- Commands use the Tuya password-ticket flow. After Tuya accepts a command, the
-  integration refreshes after bounded delays of 2, 3, and 5 seconds and reports
-  success only when the physical motor state is confirmed.
+- This integration remains cloud-dependent; physical lock functions remain
+  available when the internet or Tuya Cloud is unavailable.
+- State comes from the official Tuya integration's Device Sharing cache. MQTT
+  updates are forwarded immediately with datapoint timestamps, with a 30-second
+  cached-state refresh as a fallback.
+- Commands send the standard `lock_motor_state` datapoint through Device
+  Sharing. After sending, the integration checks after bounded delays of 2, 3,
+  and 5 seconds and reports success only when the physical motor state is
+  confirmed. A timeout means control is unsupported or the lock did not move;
+  never assume the door changed state.
+- Legacy `v1.1.0` entries retain the paid ticket-based OpenAPI path until they
+  are reconfigured.
 - Camera streams, on-screen display (OSD), password/credential management, and
   other video-lock administration are outside this integration's scope.
 
@@ -141,18 +150,20 @@ For cautious on-device validation, use the
 
 | Symptom | What to check |
 | --- | --- |
-| Invalid authentication | Re-copy the Access ID and Access Secret from the intended Smart Home project. Do not use app login credentials. |
-| Service expired or not authorized | Authorize or renew both IoT Core and Smart Lock Open Service in the same cloud project. |
+| Official Tuya integration required | Add Home Assistant's built-in Tuya integration first and complete its QR-code login with the Tuya or Smart Life app. |
+| No lock listed | Reload the official Tuya integration and confirm the lock appears in its device list. The lock can be marked unsupported there and still be selectable here. |
+| Standard command rejected or not confirmed | The free Device Sharing session may provide telemetry but not privileged remote lock control. Observe the door safely; do not assume it moved. |
+| Legacy authentication or expired service | Reconfigure the existing Tuya Smart Lock entry to the official Tuya session. Paid IoT Core and Smart Lock Open Service are needed only if retaining legacy mode. |
 | Rate limited | Wait at least a minute before retrying and avoid repeatedly reloading or sending commands. |
-| No devices, unavailable entity, or connection failure | Verify the linked app account, matching data center/API region, internet access, and Tuya Cloud status. A US-hosted project must use **Americas**. |
+| Unavailable entity or connection failure | Verify the official Tuya integration, internet access, and Tuya Cloud status. Reload official Tuya before reloading this integration. |
 | Remote control disabled | Enable both remote lock and password-free remote unlock in the mobile app, then run setup again. |
 | Device unavailable | Confirm it is online in the Tuya Smart or Smart Life app. The integration marks entities unavailable when cloud refreshes fail and restores them after recovery. |
 | Command accepted but not confirmed | Observe the door safely and check device connectivity. Tuya accepted the request, but the expected motor state did not appear during the bounded confirmation window; do not assume the door changed state. |
 
 When reporting a problem, include Home Assistant and integration versions,
-device category/model, API region, and sanitized diagnostics. Never include an
-Access Secret, access token, command ticket, device/account identifier, or raw
-credential payload.
+device category/model, whether the action was lock or unlock, and sanitized
+diagnostics. Never include an Access Secret, app token, QR code, device/account
+identifier, credential ID, or raw credential payload.
 
 ## Support status
 

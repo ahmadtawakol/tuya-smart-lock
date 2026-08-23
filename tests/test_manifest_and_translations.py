@@ -36,14 +36,14 @@ def test_manifest_describes_release_and_fork_ownership() -> None:
     """The integration manifest publishes the intended release metadata."""
     manifest = _load_json(INTEGRATION / "manifest.json")
 
-    assert manifest["version"] == "1.1.0"
-    assert f"v{manifest['version']}" == "v1.1.0"
+    assert manifest["version"] == "1.2.0-beta.1"
     assert manifest["integration_type"] == "device"
-    assert manifest["iot_class"] == "cloud_polling"
+    assert manifest["iot_class"] == "cloud_push"
     assert manifest["config_flow"] is True
     assert manifest["documentation"] == REPOSITORY
     assert manifest["issue_tracker"] == f"{REPOSITORY}/issues"
     assert manifest["codeowners"] == ["@nicolasglg", "@ahmadtawakol"]
+    assert manifest["after_dependencies"] == ["tuya"]
     assert manifest["requirements"] == []
 
 
@@ -157,6 +157,27 @@ def test_hacs_metadata_requires_supported_home_assistant_release() -> None:
     }
 
 
+def test_readme_defaults_to_free_app_auth_and_labels_control_experimental() -> None:
+    """Documentation cannot drift back to a paid developer-cloud requirement."""
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    prerequisites = readme.split("## Prerequisites", maxsplit=1)[1].split(
+        "## Installation", maxsplit=1
+    )[0]
+    configuration = readme.split("## Configuration", maxsplit=1)[1].split(
+        "## Runtime behavior", maxsplit=1
+    )[0]
+
+    assert "built-in **Tuya** integration" in prerequisites
+    assert "QR-code app login" in prerequisites
+    assert "IoT Core" not in prerequisites
+    assert "Access ID" not in prerequisites
+    assert "No Tuya developer subscription is required" in readme
+    assert "Control in `v1.2.0-beta.1` is experimental" in readme
+    assert "reports success only after the physical state" in readme
+    assert "Reconfigure" in configuration
+    assert "Access ID, Access Secret" in configuration
+
+
 def test_ci_runs_tests_hacs_validation_and_hassfest() -> None:
     """CI validates Python, HACS integration metadata, and HA metadata."""
     workflow = yaml.safe_load(
@@ -191,19 +212,19 @@ def test_english_translation_has_exact_strings_parity() -> None:
     assert english == strings
 
 
-def test_user_description_uses_url_placeholder() -> None:
-    """The user description uses a Hassfest-compatible URL placeholder."""
+def test_user_description_uses_free_official_tuya_session() -> None:
+    """The default setup no longer requests developer cloud credentials."""
     expected = (
-        "Enter your Tuya IoT Platform credentials.\n\n"
-        "You need an active **IoT Core** and **Smart Lock Open Service** "
-        "subscription on [iot.tuya.com]({tuya_iot_url})."
+        "This integration reuses Home Assistant's official Tuya app login. "
+        "No Tuya developer subscription is required."
     )
     strings = _load_json(INTEGRATION / "strings.json")
     english = _load_json(INTEGRATION / "translations" / "en.json")
 
     assert strings["config"]["step"]["user"]["description"] == expected
     assert english["config"]["step"]["user"]["description"] == expected
-    assert "https://" not in expected
+    assert "Access ID" not in expected
+    assert "Access Secret" not in expected
 
 
 def test_config_translations_retain_all_supported_flow_messages() -> None:
@@ -211,12 +232,13 @@ def test_config_translations_retain_all_supported_flow_messages() -> None:
     strings = _load_json(INTEGRATION / "strings.json")
     config = strings["config"]
 
-    assert set(config["step"]) == {"user", "select_device", "reauth_confirm"}
-    assert set(config["step"]["user"]["data"]) == {
-        "access_id",
-        "access_secret",
-        "api_region",
+    assert set(config["step"]) == {
+        "user",
+        "select_device",
+        "reauth_confirm",
+        "reconfigure_confirm",
     }
+    assert "data" not in config["step"]["user"]
     assert set(config["step"]["select_device"]["data"]) == {"device_id"}
     assert set(config["step"]["reauth_confirm"]["data"]) == {
         "access_id",
@@ -232,8 +254,13 @@ def test_config_translations_retain_all_supported_flow_messages() -> None:
     }
     assert set(config["abort"]) == {
         "already_configured",
+        "already_using_official_tuya",
+        "migration_device_not_found",
         "no_devices_found",
+        "official_tuya_reauth_started",
+        "reconfigure_successful",
         "reauth_successful",
+        "tuya_not_configured",
     }
 
 

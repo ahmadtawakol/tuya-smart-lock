@@ -1,99 +1,107 @@
-"""Tests for the Tuya Smart Lock config flow."""
+"""Tests for Tuya Smart Lock setup through the official Tuya integration."""
 
-import asyncio
 import json
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 
-import aiohttp
 import pytest
 import voluptuous as vol
+from homeassistant.config_entries import ConfigEntryState
 from homeassistant.data_entry_flow import FlowResultType
-from pytest_homeassistant_custom_component.common import (
-    MockConfigEntry,
-    mock_platform,
-)
-from pytest_homeassistant_custom_component.test_util.aiohttp import AiohttpClientMocker
+from pytest_homeassistant_custom_component.common import MockConfigEntry, mock_platform
 
-from custom_components.tuya_smart_lock import config_flow, const
+from custom_components.tuya_smart_lock import config_flow
 from custom_components.tuya_smart_lock.const import (
     CONF_ACCESS_ID,
     CONF_ACCESS_SECRET,
     CONF_API_REGION,
     CONF_DEVICE_ID,
     CONF_DEVICE_NAME,
+    CONF_TUYA_ENTRY_ID,
     DOMAIN,
 )
 from custom_components.tuya_smart_lock.errors import (
     TuyaApiError,
     TuyaAuthenticationError,
-    TuyaAuthorizationError,
-    TuyaRateLimitError,
 )
 
-ACCESS_ID = "test-access-id"
-ACCESS_SECRET = "highly-sensitive-access-secret"
+ACCESS_ID = "legacy-access-id"
+ACCESS_SECRET = "legacy-sensitive-secret"
 DEVICE_ID = "lock-123"
 DEVICE_NAME = "Front Door"
-CREDENTIALS = {
+OFFICIAL_ENTRY_ID = "official-tuya-entry"
+LEGACY_CREDENTIALS = {
     CONF_ACCESS_ID: ACCESS_ID,
     CONF_ACCESS_SECRET: ACCESS_SECRET,
     CONF_API_REGION: "eu",
 }
-DEVICE = {
-    "id": DEVICE_ID,
-    "name": DEVICE_NAME,
-    "category": "videolock",
-    "model": "",
-    "product_name": "",
-}
 
 
-def test_tuya_iot_platform_url_is_canonical() -> None:
-    """The config flow links to the canonical Tuya IoT Platform URL."""
-    assert const.TUYA_IOT_PLATFORM_URL == "https://iot.tuya.com"
+def _device(
+    *,
+    device_id: str = DEVICE_ID,
+    name: str = DEVICE_NAME,
+    category: str = "videolock",
+):
+    """Return a minimal official Tuya device."""
+    return SimpleNamespace(id=device_id, name=name, category=category)
 
 
-def _api() -> Mock:
-    """Return a mocked Tuya API with async setup methods."""
-    api = Mock(name="tuya_api")
-    api.async_validate_credentials = AsyncMock()
-    api.async_discover_devices = AsyncMock(return_value=[DEVICE])
-    api.async_check_remote_unlock = AsyncMock(return_value=True)
-    return api
+def _official_entry(devices, *, loaded: bool = True) -> MockConfigEntry:
+    """Return an official Tuya entry with a Device Sharing manager."""
+    entry = MockConfigEntry(
+        domain="tuya",
+        entry_id=OFFICIAL_ENTRY_ID,
+        title="Smart Life account",
+        data={},
+        state=(ConfigEntryState.LOADED if loaded else ConfigEntryState.NOT_LOADED),
+    )
+    if loaded:
+        entry.runtime_data = SimpleNamespace(
+            manager=SimpleNamespace(
+                device_map={device.id: device for device in devices}
+            )
+        )
+    return entry
 
 
-def _reauth_entry() -> MockConfigEntry:
-    """Return an existing uniquely identified lock entry for reauthentication."""
+def _legacy_entry() -> MockConfigEntry:
+    """Return an existing v1.1 cloud-credential entry for reauthentication."""
     return MockConfigEntry(
         domain=DOMAIN,
-        entry_id="entry-123",
+        entry_id="legacy-entry",
         unique_id=DEVICE_ID,
         title=DEVICE_NAME,
         data={
-            **CREDENTIALS,
+            **LEGACY_CREDENTIALS,
             CONF_DEVICE_ID: DEVICE_ID,
             CONF_DEVICE_NAME: DEVICE_NAME,
         },
     )
 
 
-async def _start_flow(hass):
-    """Start the user config flow."""
+async def _start_flow(hass, official_entries=None):
+    """Start the custom integration's user flow."""
     mock_platform(
         hass,
         f"{DOMAIN}.config_flow",
         config_flow,
         built_in=False,
     )
-    return await hass.config_entries.flow.async_init(
-        DOMAIN,
-        context={"source": "user"},
-    )
+    with patch.object(
+        hass.config_entries,
+        "async_entries",
+        return_value=official_entries or [],
+    ):
+        return await hass.config_entries.flow.async_init(
+            DOMAIN,
+            context={"source": "user"},
+        )
 
 
 async def _start_reauth_flow(hass, entry: MockConfigEntry):
-    """Start reauthentication for an existing entry."""
+    """Start reauthentication for a legacy entry."""
     mock_platform(
         hass,
         f"{DOMAIN}.config_flow",
@@ -108,150 +116,184 @@ async def _start_reauth_flow(hass, entry: MockConfigEntry):
     )
 
 
-async def _submit_credentials(hass, api: Mock):
-    """Start the flow and submit standard credentials with a mocked API."""
-    session = Mock(name="shared_session")
-    with (
-        patch(
-            "custom_components.tuya_smart_lock.config_flow.async_get_clientsession",
-            return_value=session,
-        ) as get_session,
-        patch(
-            "custom_components.tuya_smart_lock.config_flow.TuyaCloudApi",
-            return_value=api,
-        ) as api_class,
+async def _start_reconfigure_flow(hass, entry, official_entries):
+    """Start migration of a legacy entry to free Device Sharing."""
+    mock_platform(
+        hass,
+        f"{DOMAIN}.config_flow",
+        config_flow,
+        built_in=False,
+    )
+    entry.add_to_hass(hass)
+    with patch.object(
+        hass.config_entries,
+        "async_entries",
+        return_value=official_entries,
     ):
-        initial = await _start_flow(hass)
-        result = await hass.config_entries.flow.async_configure(
-            initial["flow_id"],
-            user_input=CREDENTIALS,
+        return await hass.config_entries.flow.async_init(
+            DOMAIN,
+            context={"source": "reconfigure", "entry_id": entry.entry_id},
+            data=dict(entry.data),
         )
-    return result, session, get_session, api_class
 
 
-async def test_user_step_shows_credentials_form(hass) -> None:
-    """The flow starts with the Tuya credential form."""
+async def test_user_flow_requires_loaded_official_tuya(hass) -> None:
+    """Setup explains that the free official Tuya login must exist first."""
     result = await _start_flow(hass)
 
-    assert result["type"] is FlowResultType.FORM
-    assert result["step_id"] == "user"
-    assert result["errors"] == {}
-    assert result["description_placeholders"] == {
-        "tuya_iot_url": "https://iot.tuya.com"
-    }
-    assert (
-        result["data_schema"](
-            {
-                CONF_ACCESS_ID: ACCESS_ID,
-                CONF_ACCESS_SECRET: ACCESS_SECRET,
-            }
-        )
-        == CREDENTIALS
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "tuya_not_configured"
+
+
+async def test_unloaded_official_tuya_is_not_used(hass) -> None:
+    """A stale official entry cannot be mistaken for a usable session."""
+    entry = _official_entry([_device()], loaded=False)
+
+    result = await _start_flow(hass, [entry])
+
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "tuya_not_configured"
+
+
+async def test_user_flow_lists_only_supported_lock_categories(hass) -> None:
+    """The free setup discovers locks from the official Device Sharing cache."""
+    entry = _official_entry(
+        [
+            _device(),
+            _device(device_id="socket-1", name="Socket", category="cz"),
+        ],
     )
 
-
-async def test_reauth_step_shows_credentials_without_device_field(hass) -> None:
-    """Reauth can replace cloud credentials and region, but never the lock."""
-    entry = _reauth_entry()
-
-    result = await _start_reauth_flow(hass, entry)
+    result = await _start_flow(hass, [entry])
 
     assert result["type"] is FlowResultType.FORM
-    assert result["step_id"] == "reauth_confirm"
+    assert result["step_id"] == "select_device"
     assert result["errors"] == {}
-    assert result["description_placeholders"] == {"name": DEVICE_NAME}
-    assert result["data_schema"](
-        {
-            CONF_ACCESS_ID: "replacement-id",
-            CONF_ACCESS_SECRET: "replacement-secret",
-            CONF_API_REGION: "us",
-        }
-    ) == {
-        CONF_ACCESS_ID: "replacement-id",
-        CONF_ACCESS_SECRET: "replacement-secret",
-        CONF_API_REGION: "us",
+    selection = f"{OFFICIAL_ENTRY_ID}:{DEVICE_ID}"
+    assert result["data_schema"]({CONF_DEVICE_ID: selection}) == {
+        CONF_DEVICE_ID: selection
     }
     with pytest.raises(vol.Invalid):
-        result["data_schema"](
-            {
-                CONF_ACCESS_ID: "replacement-id",
-                CONF_ACCESS_SECRET: "replacement-secret",
-                CONF_API_REGION: "us",
-                CONF_DEVICE_ID: "different-device",
-            }
-        )
+        result["data_schema"]({CONF_DEVICE_ID: f"{OFFICIAL_ENTRY_ID}:socket-1"})
 
 
-def test_reauth_form_explicitly_passes_entry_title_placeholder() -> None:
-    """The integration supplies the placeholder used by its reauth description."""
-    entry = _reauth_entry()
-    flow = config_flow.TuyaSmartLockConfigFlow()
+async def test_no_shared_locks_aborts(hass) -> None:
+    """A loaded account without supported lock categories is actionable."""
+    entry = _official_entry([_device(category="cz")])
 
-    with (
-        patch.object(flow, "_get_reauth_entry", return_value=entry),
-        patch.object(flow, "async_show_form", return_value={}) as show_form,
-    ):
-        flow._show_reauth_form()
+    result = await _start_flow(hass, [entry])
 
-    assert show_form.call_args.kwargs["description_placeholders"] == {
-        "name": DEVICE_NAME
-    }
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "no_devices_found"
 
 
-@pytest.mark.parametrize(
-    ("error", "flow_error"),
-    [
-        (TuyaAuthenticationError("raw auth secret"), "invalid_auth"),
-        (TuyaApiError("raw transient secret"), "cannot_connect"),
-    ],
-    ids=["invalid-auth", "transient-connectivity"],
-)
-async def test_reauth_failure_stays_on_safe_form(
-    hass,
-    caplog,
-    error: TuyaApiError,
-    flow_error: str,
-) -> None:
-    """Reauth distinguishes invalid credentials from transient connectivity."""
-    entry = _reauth_entry()
-    api = _api()
-    api.async_validate_credentials.side_effect = error
-    form = await _start_reauth_flow(hass, entry)
-    replacement = {
-        CONF_ACCESS_ID: "replacement-id",
-        CONF_ACCESS_SECRET: "replacement-secret",
-        CONF_API_REGION: "us",
-    }
+async def test_selected_lock_stores_no_developer_credentials(hass) -> None:
+    """New entries reference the free official session and contain no secrets."""
+    entry = _official_entry([_device()])
+    form = await _start_flow(hass, [entry])
 
-    with patch(
-        "custom_components.tuya_smart_lock.config_flow.TuyaCloudApi",
-        return_value=api,
-    ):
-        result = await hass.config_entries.flow.async_configure(
-            form["flow_id"], user_input=replacement
-        )
+    result = await hass.config_entries.flow.async_configure(
+        form["flow_id"],
+        user_input={CONF_DEVICE_ID: f"{OFFICIAL_ENTRY_ID}:{DEVICE_ID}"},
+    )
 
-    assert result["type"] is FlowResultType.FORM
-    assert result["step_id"] == "reauth_confirm"
-    assert result["errors"] == {"base": flow_error}
-    assert dict(entry.data) == {
-        **CREDENTIALS,
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["title"] == DEVICE_NAME
+    assert result["data"] == {
+        CONF_TUYA_ENTRY_ID: OFFICIAL_ENTRY_ID,
         CONF_DEVICE_ID: DEVICE_ID,
         CONF_DEVICE_NAME: DEVICE_NAME,
     }
-    assert entry.unique_id == DEVICE_ID
-    assert "raw auth secret" not in repr(result)
-    assert "raw transient secret" not in repr(result)
-    assert "raw auth secret" not in caplog.text
-    assert "raw transient secret" not in caplog.text
+    assert result["result"].unique_id == DEVICE_ID
+    assert CONF_ACCESS_ID not in result["data"]
+    assert CONF_ACCESS_SECRET not in result["data"]
 
 
-async def test_successful_reauth_updates_credentials_reloads_and_preserves_identity(
-    hass,
-) -> None:
-    """Successful reauth updates only replaceable data and reloads the entry."""
-    entry = _reauth_entry()
-    api = _api()
+async def test_duplicate_shared_lock_aborts(hass) -> None:
+    """One physical lock cannot be claimed by two custom entries."""
+    entry = _official_entry([_device()])
+    existing = MockConfigEntry(domain=DOMAIN, unique_id=DEVICE_ID, data={})
+    existing.add_to_hass(hass)
+    form = await _start_flow(hass, [entry])
+
+    result = await hass.config_entries.flow.async_configure(
+        form["flow_id"],
+        user_input={CONF_DEVICE_ID: f"{OFFICIAL_ENTRY_ID}:{DEVICE_ID}"},
+    )
+
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "already_configured"
+
+
+async def test_legacy_entry_reconfigures_to_free_matching_lock(hass) -> None:
+    """Existing users can remove developer secrets without deleting entities."""
+    legacy = _legacy_entry()
+    official = _official_entry([_device()])
+    form = await _start_reconfigure_flow(hass, legacy, [official])
+
+    assert form["type"] is FlowResultType.FORM
+    assert form["step_id"] == "reconfigure_confirm"
+    assert form["description_placeholders"] == {"name": DEVICE_NAME}
+    with patch.object(
+        hass.config_entries,
+        "async_schedule_reload",
+    ) as reload_entry:
+        result = await hass.config_entries.flow.async_configure(
+            form["flow_id"], user_input={}
+        )
+
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "reconfigure_successful"
+    assert dict(legacy.data) == {
+        CONF_TUYA_ENTRY_ID: OFFICIAL_ENTRY_ID,
+        CONF_DEVICE_ID: DEVICE_ID,
+        CONF_DEVICE_NAME: DEVICE_NAME,
+    }
+    assert legacy.unique_id == DEVICE_ID
+    reload_entry.assert_called_once_with(legacy.entry_id)
+
+
+async def test_reconfigure_requires_same_lock_in_official_tuya(hass) -> None:
+    """Migration cannot silently retarget stable entities to another lock."""
+    legacy = _legacy_entry()
+    official = _official_entry([_device(device_id="another-lock")])
+
+    result = await _start_reconfigure_flow(hass, legacy, [official])
+
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "migration_device_not_found"
+
+
+async def test_reconfigure_relinks_replaced_official_tuya_entry(hass) -> None:
+    """Removing and re-adding official Tuya can repair the stored entry link."""
+    sharing = MockConfigEntry(
+        domain=DOMAIN,
+        entry_id="sharing-entry",
+        unique_id=DEVICE_ID,
+        title=DEVICE_NAME,
+        data={
+            CONF_TUYA_ENTRY_ID: "removed-official-entry",
+            CONF_DEVICE_ID: DEVICE_ID,
+            CONF_DEVICE_NAME: DEVICE_NAME,
+        },
+    )
+    replacement = _official_entry([_device()])
+
+    form = await _start_reconfigure_flow(hass, sharing, [replacement])
+    result = await hass.config_entries.flow.async_configure(
+        form["flow_id"], user_input={}
+    )
+
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "reconfigure_successful"
+    assert sharing.data[CONF_TUYA_ENTRY_ID] == OFFICIAL_ENTRY_ID
+
+
+async def test_legacy_reauth_still_accepts_replacement_cloud_credentials(hass) -> None:
+    """Existing v1.1 entries remain recoverable until users migrate voluntarily."""
+    entry = _legacy_entry()
+    api = Mock(name="legacy_api")
+    api.async_validate_credentials = AsyncMock()
     form = await _start_reauth_flow(hass, entry)
     replacement = {
         CONF_ACCESS_ID: "replacement-id",
@@ -263,7 +305,7 @@ async def test_successful_reauth_updates_credentials_reloads_and_preserves_ident
         patch(
             "custom_components.tuya_smart_lock.config_flow.TuyaCloudApi",
             return_value=api,
-        ) as api_class,
+        ),
         patch.object(hass.config_entries, "async_schedule_reload") as reload_entry,
     ):
         result = await hass.config_entries.flow.async_configure(
@@ -277,390 +319,53 @@ async def test_successful_reauth_updates_credentials_reloads_and_preserves_ident
         CONF_DEVICE_ID: DEVICE_ID,
         CONF_DEVICE_NAME: DEVICE_NAME,
     }
-    assert entry.unique_id == DEVICE_ID
-    assert entry.title == DEVICE_NAME
-    api_class.assert_called_once()
     api.async_validate_credentials.assert_awaited_once_with()
-    api.async_discover_devices.assert_not_awaited()
-    api.async_check_remote_unlock.assert_not_awaited()
     reload_entry.assert_called_once_with(entry.entry_id)
 
 
-async def test_valid_credentials_discover_and_configure_selected_lock(
-    hass, caplog
-) -> None:
-    """A valid selected lock creates a uniquely identified config entry."""
-    api = _api()
-    calls: list[str] = []
-
-    async def validate() -> None:
-        calls.append("validate")
-
-    async def discover() -> list[dict[str, str]]:
-        calls.append("discover")
-        return [DEVICE]
-
-    async def check_remote_unlock(device_id: str) -> bool:
-        assert device_id == DEVICE_ID
-        calls.append("check_remote_unlock")
-        return True
-
-    api.async_validate_credentials.side_effect = validate
-    api.async_discover_devices.side_effect = discover
-    api.async_check_remote_unlock.side_effect = check_remote_unlock
-
-    result, session, get_session, api_class = await _submit_credentials(hass, api)
-
-    assert result["type"] is FlowResultType.FORM
-    assert result["step_id"] == "select_device"
-    assert result["errors"] == {}
-    assert result["data_schema"]({CONF_DEVICE_ID: DEVICE_ID}) == {
-        CONF_DEVICE_ID: DEVICE_ID
-    }
-    with pytest.raises(vol.Invalid):
-        result["data_schema"]({CONF_DEVICE_ID: "not-discovered"})
-    assert calls == ["validate", "discover"]
-    get_session.assert_called_once_with(hass)
-    api_class.assert_called_once_with(
-        session,
-        access_id=ACCESS_ID,
-        access_secret=ACCESS_SECRET,
-        region="eu",
-    )
-
-    result = await hass.config_entries.flow.async_configure(
-        result["flow_id"],
-        user_input={CONF_DEVICE_ID: DEVICE_ID},
-    )
-
-    assert result["type"] is FlowResultType.CREATE_ENTRY
-    assert result["title"] == DEVICE_NAME
-    assert result["data"] == {
-        CONF_ACCESS_ID: ACCESS_ID,
-        CONF_ACCESS_SECRET: ACCESS_SECRET,
-        CONF_API_REGION: "eu",
-        CONF_DEVICE_ID: DEVICE_ID,
-        CONF_DEVICE_NAME: DEVICE_NAME,
-    }
-    assert result["result"].unique_id == DEVICE_ID
-    assert calls == ["validate", "discover", "check_remote_unlock"]
-    api.async_validate_credentials.assert_awaited_once_with()
-    api.async_discover_devices.assert_awaited_once_with()
-    api.async_check_remote_unlock.assert_awaited_once_with(DEVICE_ID)
-    assert ACCESS_SECRET not in result["title"]
-    assert ACCESS_SECRET not in caplog.text
-
-
 @pytest.mark.parametrize(
     ("error", "flow_error"),
     [
-        (TuyaAuthenticationError("raw secret detail"), "invalid_auth"),
-        (
-            TuyaAuthorizationError("raw secret detail"),
-            "service_not_authorized",
-        ),
-        (TuyaRateLimitError("raw secret detail"), "rate_limited"),
-        (TuyaApiError("raw secret detail"), "cannot_connect"),
-        (aiohttp.ClientError("raw secret detail"), "cannot_connect"),
+        (TuyaAuthenticationError("raw-auth-detail"), "invalid_auth"),
+        (TuyaApiError("raw-network-detail"), "cannot_connect"),
     ],
-    ids=["authentication", "authorization", "rate-limit", "api", "aiohttp"],
 )
-async def test_credential_failure_shows_actionable_safe_error(
+async def test_legacy_reauth_failure_is_safe(
     hass, caplog, error: Exception, flow_error: str
 ) -> None:
-    """Credential failures stay on the user form with a fixed safe error."""
-    api = _api()
-    api.async_validate_credentials.side_effect = error
+    """Legacy failures retain fixed messages without exposing cloud secrets."""
+    entry = _legacy_entry()
+    api = Mock(name="legacy_api")
+    api.async_validate_credentials = AsyncMock(side_effect=error)
+    form = await _start_reauth_flow(hass, entry)
 
-    result, _, _, _ = await _submit_credentials(hass, api)
-
-    assert result["type"] is FlowResultType.FORM
-    assert result["step_id"] == "user"
-    assert result["errors"] == {"base": flow_error}
-    assert result["description_placeholders"] == {
-        "tuya_iot_url": "https://iot.tuya.com"
-    }
-    assert ACCESS_SECRET not in repr(result.get("description_placeholders"))
-    assert ACCESS_SECRET not in caplog.text
-    assert "raw secret detail" not in repr(result)
-    assert "raw secret detail" not in caplog.text
-
-
-async def test_token_endpoint_outage_is_cannot_connect_not_invalid_auth(
-    hass,
-    aioclient_mock: AiohttpClientMocker,
-) -> None:
-    """A token-service HTTP 503 stays a transient config-flow failure."""
-    aioclient_mock.get(
-        "https://openapi.tuyaeu.com/v1.0/token?grant_type=1",
-        status=503,
-        json={"success": False, "code": 503, "msg": "raw outage detail"},
-    )
-    initial = await _start_flow(hass)
-
-    result = await hass.config_entries.flow.async_configure(
-        initial["flow_id"],
-        user_input=CREDENTIALS,
-    )
-
-    assert result["type"] is FlowResultType.FORM
-    assert result["step_id"] == "user"
-    assert result["errors"] == {"base": "cannot_connect"}
-    assert result["description_placeholders"] == {
-        "tuya_iot_url": "https://iot.tuya.com"
-    }
-
-
-@pytest.mark.parametrize(
-    ("error", "flow_error"),
-    [
-        (TuyaAuthenticationError("raw secret detail"), "invalid_auth"),
-        (
-            TuyaAuthorizationError("raw secret detail"),
-            "service_not_authorized",
-        ),
-        (TuyaRateLimitError("raw secret detail"), "rate_limited"),
-        (TuyaApiError("raw secret detail"), "cannot_connect"),
-        (aiohttp.ClientError("raw secret detail"), "cannot_connect"),
-    ],
-    ids=["authentication", "authorization", "rate-limit", "api", "aiohttp"],
-)
-async def test_discovery_failure_returns_to_user_with_actionable_safe_error(
-    hass, caplog, error: Exception, flow_error: str
-) -> None:
-    """Discovery failures do not abort or leak the upstream error."""
-    api = _api()
-    api.async_discover_devices.side_effect = error
-
-    result, _, _, _ = await _submit_credentials(hass, api)
-
-    assert result["type"] is FlowResultType.FORM
-    assert result["step_id"] == "user"
-    assert result["errors"] == {"base": flow_error}
-    assert result["description_placeholders"] == {
-        "tuya_iot_url": "https://iot.tuya.com"
-    }
-    assert ACCESS_SECRET not in repr(result.get("description_placeholders"))
-    assert ACCESS_SECRET not in caplog.text
-    assert "raw secret detail" not in repr(result)
-    assert "raw secret detail" not in caplog.text
-
-
-async def test_no_discovered_locks_aborts(hass) -> None:
-    """An account with no supported lock devices gets a specific abort."""
-    api = _api()
-    api.async_discover_devices.return_value = []
-
-    result, _, _, _ = await _submit_credentials(hass, api)
-
-    assert result["type"] is FlowResultType.ABORT
-    assert result["reason"] == "no_devices_found"
-
-
-async def test_disabled_remote_unlock_stays_on_device_form(hass) -> None:
-    """A lock without remote unlock cannot create an entry."""
-    api = _api()
-    api.async_check_remote_unlock.return_value = False
-    result, _, _, _ = await _submit_credentials(hass, api)
-
-    result = await hass.config_entries.flow.async_configure(
-        result["flow_id"],
-        user_input={CONF_DEVICE_ID: DEVICE_ID},
-    )
-
-    assert result["type"] is FlowResultType.FORM
-    assert result["step_id"] == "select_device"
-    assert result["errors"] == {"base": "remote_unlock_disabled"}
-    api.async_discover_devices.assert_awaited_once_with()
-    api.async_check_remote_unlock.assert_awaited_once_with(DEVICE_ID)
-
-
-@pytest.mark.parametrize(
-    ("error", "flow_error"),
-    [
-        (
-            TuyaAuthorizationError("raw secret detail"),
-            "service_not_authorized",
-        ),
-        (TuyaRateLimitError("raw secret detail"), "rate_limited"),
-        (TuyaApiError("raw secret detail"), "cannot_connect"),
-        (aiohttp.ClientError("raw secret detail"), "cannot_connect"),
-    ],
-    ids=["authorization", "rate-limit", "api", "aiohttp"],
-)
-async def test_remote_unlock_check_failure_stays_on_device_form_with_safe_error(
-    hass, caplog, error: Exception, flow_error: str
-) -> None:
-    """Retryable capability failures stay on selection with a safe error."""
-    api = _api()
-    api.async_check_remote_unlock.side_effect = error
-    result, _, _, _ = await _submit_credentials(hass, api)
-
-    result = await hass.config_entries.flow.async_configure(
-        result["flow_id"],
-        user_input={CONF_DEVICE_ID: DEVICE_ID},
-    )
-
-    assert result["type"] is FlowResultType.FORM
-    assert result["step_id"] == "select_device"
-    assert result["errors"] == {"base": flow_error}
-    assert ACCESS_SECRET not in repr(result.get("description_placeholders"))
-    assert ACCESS_SECRET not in caplog.text
-    assert "raw secret detail" not in repr(result)
-    assert "raw secret detail" not in caplog.text
-    api.async_discover_devices.assert_awaited_once_with()
-
-
-async def test_remote_auth_failure_restarts_with_corrected_credentials(
-    hass, caplog
-) -> None:
-    """Expired selection credentials are discarded and can be replaced."""
-    original_api = _api()
-    original_api.async_check_remote_unlock.side_effect = TuyaAuthenticationError(
-        "raw secret detail"
-    )
-    selection, _, _, _ = await _submit_credentials(hass, original_api)
-
-    result = await hass.config_entries.flow.async_configure(
-        selection["flow_id"],
-        user_input={CONF_DEVICE_ID: DEVICE_ID},
-    )
-
-    assert result["type"] is FlowResultType.FORM
-    assert result["step_id"] == "user"
-    assert result["errors"] == {"base": "invalid_auth"}
-    assert result["description_placeholders"] == {
-        "tuya_iot_url": "https://iot.tuya.com"
-    }
-    assert ACCESS_SECRET not in repr(result.get("description_placeholders"))
-    assert ACCESS_SECRET not in repr(result["errors"])
-    assert ACCESS_SECRET not in caplog.text
-    assert "raw secret detail" not in repr(result)
-    assert "raw secret detail" not in caplog.text
-
-    corrected_secret = "corrected-access-secret"
-    corrected_credentials = {
-        **CREDENTIALS,
-        CONF_ACCESS_SECRET: corrected_secret,
-    }
-    corrected_api = _api()
-    corrected_session = Mock(name="corrected_shared_session")
-    with (
-        patch(
-            "custom_components.tuya_smart_lock.config_flow.async_get_clientsession",
-            return_value=corrected_session,
-        ),
-        patch(
-            "custom_components.tuya_smart_lock.config_flow.TuyaCloudApi",
-            return_value=corrected_api,
-        ) as api_class,
+    with patch(
+        "custom_components.tuya_smart_lock.config_flow.TuyaCloudApi",
+        return_value=api,
     ):
         result = await hass.config_entries.flow.async_configure(
-            result["flow_id"],
-            user_input=corrected_credentials,
+            form["flow_id"], user_input=LEGACY_CREDENTIALS
         )
 
     assert result["type"] is FlowResultType.FORM
-    assert result["step_id"] == "select_device"
-    corrected_api.async_validate_credentials.assert_awaited_once_with()
-    corrected_api.async_discover_devices.assert_awaited_once_with()
-    api_class.assert_called_once_with(
-        corrected_session,
-        access_id=ACCESS_ID,
-        access_secret=corrected_secret,
-        region="eu",
+    assert result["step_id"] == "reauth_confirm"
+    assert result["errors"] == {"base": flow_error}
+    assert result["description_placeholders"] == {"name": DEVICE_NAME}
+    assert "raw-auth-detail" not in repr(result)
+    assert "raw-network-detail" not in repr(result)
+    assert ACCESS_SECRET not in caplog.text
+
+
+def test_english_translation_matches_strings_and_free_setup_messages() -> None:
+    """English strings stay synchronized and explain free app authentication."""
+    integration = Path(__file__).parents[1] / "custom_components" / DOMAIN
+    strings = json.loads((integration / "strings.json").read_text())
+    english = json.loads((integration / "translations" / "en.json").read_text())
+
+    assert english == strings
+    assert (
+        "official Tuya integration" in strings["config"]["abort"]["tuya_not_configured"]
     )
-
-    result = await hass.config_entries.flow.async_configure(
-        result["flow_id"],
-        user_input={CONF_DEVICE_ID: DEVICE_ID},
+    assert (
+        "Access Secret" not in strings["config"]["step"]["select_device"]["description"]
     )
-
-    assert result["type"] is FlowResultType.CREATE_ENTRY
-    assert result["data"][CONF_ACCESS_SECRET] == corrected_secret
-    assert ACCESS_SECRET not in repr(result["data"])
-    original_api.async_discover_devices.assert_awaited_once_with()
-    original_api.async_check_remote_unlock.assert_awaited_once_with(DEVICE_ID)
-    corrected_api.async_check_remote_unlock.assert_awaited_once_with(DEVICE_ID)
-
-
-async def test_duplicate_device_aborts_as_already_configured(hass) -> None:
-    """An existing device aborts before any capability API request."""
-    MockConfigEntry(
-        domain=DOMAIN,
-        unique_id=DEVICE_ID,
-        data={},
-    ).add_to_hass(hass)
-    api = _api()
-    api.async_check_remote_unlock.side_effect = TuyaApiError(
-        "capability check must not be called"
-    )
-    result, _, _, _ = await _submit_credentials(hass, api)
-
-    result = await hass.config_entries.flow.async_configure(
-        result["flow_id"],
-        user_input={CONF_DEVICE_ID: DEVICE_ID},
-    )
-
-    assert result["type"] is FlowResultType.ABORT
-    assert result["reason"] == "already_configured"
-    api.async_check_remote_unlock.assert_not_awaited()
-
-
-async def test_in_progress_device_claim_blocks_concurrent_capability_check(
-    hass,
-) -> None:
-    """Only the flow that first claims a device may check its capability."""
-    first_api = _api()
-    second_api = _api()
-    capability_started = asyncio.Event()
-    release_capability = asyncio.Event()
-
-    async def blocked_capability_check(device_id: str) -> bool:
-        assert device_id == DEVICE_ID
-        capability_started.set()
-        await release_capability.wait()
-        return True
-
-    first_api.async_check_remote_unlock.side_effect = blocked_capability_check
-    first_flow, _, _, _ = await _submit_credentials(hass, first_api)
-    second_flow, _, _, _ = await _submit_credentials(hass, second_api)
-
-    first_selection = asyncio.create_task(
-        hass.config_entries.flow.async_configure(
-            first_flow["flow_id"],
-            user_input={CONF_DEVICE_ID: DEVICE_ID},
-        )
-    )
-    await capability_started.wait()
-    try:
-        second_result = await hass.config_entries.flow.async_configure(
-            second_flow["flow_id"],
-            user_input={CONF_DEVICE_ID: DEVICE_ID},
-        )
-    finally:
-        release_capability.set()
-        first_result = await first_selection
-
-    assert first_result["type"] is FlowResultType.CREATE_ENTRY
-    assert second_result["type"] is FlowResultType.ABORT
-    assert second_result["reason"] == "already_in_progress"
-    first_api.async_check_remote_unlock.assert_awaited_once_with(DEVICE_ID)
-    second_api.async_check_remote_unlock.assert_not_awaited()
-
-
-def test_english_translation_matches_strings_and_has_actionable_errors() -> None:
-    """English setup copy stays synchronized and distinguishes error causes."""
-    integration_dir = Path(__file__).parents[1] / "custom_components" / DOMAIN
-    strings = json.loads((integration_dir / "strings.json").read_text())
-    translation = json.loads((integration_dir / "translations" / "en.json").read_text())
-
-    assert translation == strings
-    errors = strings["config"]["error"]
-    authorization = errors["service_not_authorized"]
-    assert "IoT Core" in authorization
-    assert "Smart Lock Open Service" in authorization
-    rate_limit = errors["rate_limited"]
-    assert "wait" in rate_limit.casefold()
-    assert "retry" in rate_limit.casefold()
-    assert "credential" not in rate_limit.casefold()

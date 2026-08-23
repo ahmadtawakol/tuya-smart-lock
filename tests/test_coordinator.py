@@ -1,7 +1,7 @@
 """Tests for the Tuya Smart Lock data coordinator."""
 
 from datetime import timedelta
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 from homeassistant.exceptions import ConfigEntryAuthFailed
@@ -174,6 +174,34 @@ async def test_transient_failure_recovers_and_replaces_data(hass, caplog) -> Non
     assert coordinator.last_update_success is True
     assert coordinator.data == current
     assert coordinator.data is not stale
+
+
+def test_device_sharing_push_replaces_data_without_poll_delay(hass) -> None:
+    """Official Tuya MQTT updates reach all entities immediately."""
+    api = Mock(name="sharing_api")
+    coordinator = _coordinator(hass, api)
+    pushed = {
+        "doorbell": TuyaProperty(
+            code="doorbell",
+            value=True,
+            timestamp_ms=1_785_000_000_123,
+            dp_id=None,
+        )
+    }
+
+    coordinator.async_handle_push(pushed)
+
+    assert coordinator.data == pushed
+    assert coordinator.last_update_success is True
+
+
+def test_missing_device_push_marks_coordinator_unavailable(hass) -> None:
+    """Removing the lock from the official account cannot retain availability."""
+    coordinator = _coordinator(hass, Mock(name="sharing_api"))
+
+    coordinator.async_handle_push(None)
+
+    assert coordinator.last_update_success is False
 
 
 def test_base_entity_has_stable_identity_and_device_info(hass) -> None:
