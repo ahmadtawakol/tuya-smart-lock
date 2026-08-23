@@ -1,9 +1,9 @@
 {
   "domain": "tuya_smart_lock",
   "name": "Tuya Smart Lock",
+  "after_dependencies": ["tuya"],
   "codeowners": ["@nicolasglg", "@ahmadtawakol"],
   "config_flow": true,
-  "after_dependencies": ["tuya"],
   "documentation": "https://github.com/ahmadtawakol/tuya-smart-lock",
   "integration_type": "device",
   "iot_class": "cloud_push",
