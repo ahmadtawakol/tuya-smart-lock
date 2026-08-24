@@ -26,6 +26,8 @@ def _device(
     return SimpleNamespace(
         id=DEVICE_ID,
         online=online,
+        set_up=False,
+        support_local=False,
         function=(
             {"lock_motor_state": SimpleNamespace(type="Boolean")}
             if functions is None
@@ -39,6 +41,14 @@ def _api(hass, device=None):
     """Return an adapter backed by a dynamically resolved official runtime."""
     manager = Mock(name="manager")
     manager.device_map = {DEVICE_ID: device or _device()}
+    manager.device_repository.query_devices_by_ids.return_value = list(
+        manager.device_map.values()
+    )
+    manager.mq = SimpleNamespace(
+        client=Mock(name="mqtt_client"),
+        device=list(manager.device_map.values()),
+        subscribe_device=Mock(name="subscribe_device"),
+    )
     official_entry = SimpleNamespace(
         entry_id="official-tuya-entry",
         runtime_data=SimpleNamespace(manager=manager),
@@ -117,6 +127,14 @@ async def test_adapter_resolves_reloaded_official_manager(hass) -> None:
     api, old_manager, official_entry = _api(hass)
     new_manager = Mock(name="new_manager")
     new_manager.device_map = {DEVICE_ID: _device(status={"lock_motor_state": True})}
+    new_manager.device_repository.query_devices_by_ids.return_value = list(
+        new_manager.device_map.values()
+    )
+    new_manager.mq = SimpleNamespace(
+        client=Mock(name="new_mqtt_client"),
+        device=list(new_manager.device_map.values()),
+        subscribe_device=Mock(name="new_subscribe_device"),
+    )
     official_entry.runtime_data = SimpleNamespace(manager=new_manager)
 
     properties = await api.async_get_properties(DEVICE_ID)
@@ -132,6 +150,44 @@ async def test_missing_device_is_unavailable(hass) -> None:
 
     with pytest.raises(TuyaDeviceUnavailableError):
         await api.async_get_properties(DEVICE_ID)
+
+
+async def test_offline_cache_is_refreshed_without_reloading_official_tuya(
+    hass,
+) -> None:
+    """A targeted query replaces stale offline metadata in the cached object."""
+    cached = _device(online=False, status={"lock_motor_state": False})
+    fresh = _device(
+        online=True,
+        status={"lock_motor_state": False, "residual_electricity": 68},
+    )
+    api, manager, _ = _api(hass, cached)
+    manager.device_repository.query_devices_by_ids.return_value = [fresh]
+
+    properties = await api.async_get_properties(DEVICE_ID)
+
+    manager.device_repository.query_devices_by_ids.assert_called_once_with([DEVICE_ID])
+    assert manager.device_map[DEVICE_ID] is cached
+    assert cached.online is True
+    assert properties["residual_electricity"].value == 68
+
+
+async def test_prepare_subscribes_unsupported_lock_device_topic_once(hass) -> None:
+    """The custom lock receives online and event pushes despite no core entity."""
+    cached = _device()
+    api, manager, _ = _api(hass, cached)
+    manager.device_repository.query_devices_by_ids.return_value = [_device()]
+    manager.mq = SimpleNamespace(
+        client=Mock(name="mqtt_client"),
+        device=[],
+        subscribe_device=Mock(name="subscribe_device"),
+    )
+
+    await api.async_prepare()
+    await api.async_prepare()
+
+    assert cached.set_up is True
+    manager.mq.subscribe_device.assert_called_once_with(DEVICE_ID, cached)
 
 
 async def test_official_push_preserves_event_timestamp(hass) -> None:
@@ -155,6 +211,35 @@ async def test_official_push_preserves_event_timestamp(hass) -> None:
     assert updates[0]["doorbell"].timestamp_ms == 1_785_000_000_123
     unsubscribe()
     manager.send_commands.assert_not_called()
+
+
+async def test_offline_and_online_pushes_update_availability_without_reload(
+    hass,
+) -> None:
+    """Direct device-topic presence updates recover the coordinator immediately."""
+    device = _device(online=False)
+    api, _, _ = _api(hass, device)
+    updates = []
+    unsubscribe = api.async_subscribe(updates.append)
+
+    async_dispatcher_send(
+        hass,
+        f"tuya_entry_update_{DEVICE_ID}",
+        None,
+        None,
+    )
+    device.online = True
+    async_dispatcher_send(
+        hass,
+        f"tuya_entry_update_{DEVICE_ID}",
+        None,
+        None,
+    )
+    await hass.async_block_till_done()
+
+    assert updates[0] is None
+    assert updates[1]["lock_motor_state"].value is False
+    unsubscribe()
 
 
 async def test_missing_sdk_timestamp_gets_monotonic_receipt_time(hass) -> None:

@@ -179,6 +179,7 @@ async def test_new_setup_reuses_loaded_official_tuya_session(hass) -> None:
     )
     official_entry.runtime_data = SimpleNamespace(manager=Mock(name="manager"))
     api = Mock(name="sharing_api")
+    api.async_prepare = AsyncMock()
     unsubscribe = Mock(name="unsubscribe")
     api.async_subscribe.return_value = unsubscribe
     coordinator = Mock(name="coordinator")
@@ -207,6 +208,7 @@ async def test_new_setup_reuses_loaded_official_tuya_session(hass) -> None:
         assert await async_setup_entry(hass, entry) is True
 
     api_class.assert_called_once_with(hass, official_entry, DEVICE_ID)
+    api.async_prepare.assert_awaited_once_with()
     api.async_subscribe.assert_called_once_with(coordinator.async_handle_push)
     runtime = hass.data[DOMAIN][entry.entry_id]
     assert runtime.api is api
@@ -261,6 +263,7 @@ async def test_failed_sharing_refresh_unsubscribes_push_listener(hass) -> None:
     )
     official_entry.runtime_data = SimpleNamespace(manager=Mock(name="manager"))
     api = Mock(name="sharing_api")
+    api.async_prepare = AsyncMock()
     unsubscribe = Mock(name="unsubscribe")
     api.async_subscribe.return_value = unsubscribe
     coordinator = Mock(name="coordinator")

@@ -1,6 +1,7 @@
 """Adapter for Home Assistant's free Tuya Device Sharing session."""
 
 import time
+from asyncio import Lock
 from collections.abc import Callable, Mapping
 from typing import Any
 
@@ -21,6 +22,7 @@ type SharingUpdateCallback = Callable[[dict[str, TuyaProperty] | None], None]
 
 # Signal published by homeassistant.components.tuya.coordinator.DeviceListener.
 TUYA_HA_SIGNAL_UPDATE_ENTITY = "tuya_entry_update"
+OFFLINE_REFRESH_INTERVAL_SECONDS = 10
 
 
 class TuyaSharingApi:
@@ -37,6 +39,9 @@ class TuyaSharingApi:
         self.tuya_entry = tuya_entry
         self.device_id = device_id
         self._timestamps_ms: dict[str, int] = {}
+        self._refresh_lock = Lock()
+        self._last_device_refresh = 0.0
+        self._prepared_manager: Any = None
 
     @property
     def _manager(self) -> Any:
@@ -73,6 +78,80 @@ class TuyaSharingApi:
             if isinstance(code, str) and code
         }
 
+    async def _async_sdk_call(self, target: Callable[..., Any], *args: Any) -> Any:
+        """Run one blocking Device Sharing call behind a sanitized boundary."""
+        try:
+            return await self.hass.async_add_executor_job(target, *args)
+        except RequestException, TimeoutError:
+            raise TuyaApiError("Unable to communicate with Tuya.") from None
+        except Exception as error:
+            if error.__class__.__module__.startswith("tuya_sharing"):
+                raise TuyaApiError("Unable to communicate with Tuya.") from None
+            raise
+
+    async def _async_refresh_device(self) -> Any:
+        """Refresh only this lock and update the cached object in place."""
+        async with self._refresh_lock:
+            manager = self._manager
+            repository = getattr(manager, "device_repository", None)
+            query_devices = getattr(repository, "query_devices_by_ids", None)
+            if not callable(query_devices):
+                raise TuyaApiError("The official Tuya integration is unavailable.")
+            devices = await self._async_sdk_call(query_devices, [self.device_id])
+
+            if not isinstance(devices, list):
+                raise TuyaApiError("The official Tuya integration is unavailable.")
+            fresh = next(
+                (
+                    device
+                    for device in devices
+                    if getattr(device, "id", None) == self.device_id
+                ),
+                None,
+            )
+            if fresh is None:
+                raise TuyaDeviceUnavailableError("The Tuya smart lock is unavailable.")
+
+            device_map = getattr(manager, "device_map", None)
+            if not isinstance(device_map, dict):
+                raise TuyaApiError("The official Tuya integration is unavailable.")
+            cached = device_map.get(self.device_id)
+            if cached is None:
+                device_map[self.device_id] = fresh
+                cached = fresh
+            else:
+                for name, value in vars(fresh).items():
+                    if name != "set_up":
+                        setattr(cached, name, value)
+            self._last_device_refresh = time.monotonic()
+            return cached
+
+    async def async_prepare(self) -> None:
+        """Refresh and subscribe unsupported locks to their direct MQTT topic."""
+        device = await self._async_refresh_device()
+        manager = self._manager
+        device.set_up = True
+        if self._prepared_manager is manager:
+            return
+
+        mq = getattr(manager, "mq", None)
+        if mq is None or getattr(mq, "client", None) is None:
+            await self._async_sdk_call(manager.refresh_mq)
+            self._prepared_manager = manager
+            return
+
+        subscribed_devices = getattr(mq, "device", []) or []
+        if not any(
+            getattr(subscribed, "id", None) == self.device_id
+            for subscribed in subscribed_devices
+        ):
+            await self._async_sdk_call(
+                mq.subscribe_device,
+                self.device_id,
+                device,
+            )
+        self._prepared_manager = manager
+
     async def async_get_properties(
         self,
         device_id: str,
@@ -81,6 +160,15 @@ class TuyaSharingApi:
         if device_id != self.device_id:
             raise TuyaDeviceUnavailableError("The Tuya smart lock is unavailable.")
         device = self._device()
+        if self._prepared_manager is not self._manager:
+            await self.async_prepare()
+            device = self._device()
+        if getattr(device, "online", True) is False:
+            if (
+                time.monotonic() - self._last_device_refresh
+                >= OFFLINE_REFRESH_INTERVAL_SECONDS
+            ):
+                device = await self._async_refresh_device()
         if getattr(device, "online", True) is False:
             raise TuyaDeviceUnavailableError("The Tuya smart lock is unavailable.")
         return self._properties()
@@ -154,7 +242,10 @@ class TuyaSharingApi:
                         self._timestamps_ms.get(event_code, -1) + 1,
                     )
             try:
-                update_callback(self._properties())
+                if getattr(self._device(), "online", True) is False:
+                    update_callback(None)
+                else:
+                    update_callback(self._properties())
             except TuyaApiError:
                 update_callback(None)
 

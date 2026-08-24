@@ -48,7 +48,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             is None
         ):
             raise ConfigEntryNotReady("The official Tuya integration is not loaded.")
-        api: TuyaLockApi = TuyaSharingApi(hass, official_entry, device_id)
+        sharing_api = TuyaSharingApi(hass, official_entry, device_id)
+        await sharing_api.async_prepare()
+        api: TuyaLockApi = sharing_api
     else:
         session = async_get_clientsession(hass)
         api = TuyaCloudApi(

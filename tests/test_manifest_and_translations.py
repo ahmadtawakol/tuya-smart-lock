@@ -36,7 +36,7 @@ def test_manifest_describes_release_and_fork_ownership() -> None:
     """The integration manifest publishes the intended release metadata."""
     manifest = _load_json(INTEGRATION / "manifest.json")
 
-    assert manifest["version"] == "1.2.1"
+    assert manifest["version"] == "1.2.2"
     assert manifest["integration_type"] == "device"
     assert manifest["iot_class"] == "cloud_push"
     assert manifest["config_flow"] is True
