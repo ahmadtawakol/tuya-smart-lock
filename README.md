@@ -141,9 +141,10 @@ and API region are then removed from that config entry.
   keeps its listener attached, and recovers on the online presence update
   without reloading either integration.
 - When the Device Sharing SDK omits a timestamp, an individual live event gets a
-  monotonic receipt timestamp. Ambiguous updates containing several event
-  sources are treated as snapshots and suppressed instead of replaying every
-  historical event together.
+  monotonic receipt timestamp. Multi-event updates during the short startup
+  grace period are treated as snapshots and suppressed instead of replaying
+  history. Later live batches—such as a doorbell ring followed by opening the
+  door—emit every included event separately.
 - Commands send the standard `lock_motor_state` datapoint through Device
   Sharing. After sending, the integration checks after bounded delays of 2, 3,
   and 5 seconds and reports success only when the physical motor state is

@@ -3,6 +3,7 @@
 import time
 from asyncio import Lock
 from collections.abc import Callable, Mapping
+from time import monotonic
 from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
@@ -23,6 +24,7 @@ type SharingUpdateCallback = Callable[[dict[str, TuyaProperty] | None], None]
 # Signal published by homeassistant.components.tuya.coordinator.DeviceListener.
 TUYA_HA_SIGNAL_UPDATE_ENTITY = "tuya_entry_update"
 OFFLINE_REFRESH_INTERVAL_SECONDS = 10
+EVENT_SNAPSHOT_GRACE_SECONDS = 5
 
 
 class TuyaSharingApi:
@@ -127,7 +129,7 @@ class TuyaSharingApi:
                 for name, value in vars(fresh).items():
                     if name != "set_up":
                         setattr(cached, name, value)
-            self._last_device_refresh = time.monotonic()
+            self._last_device_refresh = monotonic()
             return cached
 
     async def async_prepare(self) -> None:
@@ -169,7 +171,7 @@ class TuyaSharingApi:
             device = self._device()
         if getattr(device, "online", True) is False:
             if (
-                time.monotonic() - self._last_device_refresh
+                monotonic() - self._last_device_refresh
                 >= OFFLINE_REFRESH_INTERVAL_SECONDS
             ):
                 device = await self._async_refresh_device()
@@ -211,6 +213,7 @@ class TuyaSharingApi:
         self, update_callback: SharingUpdateCallback
     ) -> Callable[[], None]:
         """Forward official Tuya push updates with their datapoint timestamps."""
+        subscribed_at = monotonic()
 
         @callback
         def handle_update(
@@ -230,17 +233,19 @@ class TuyaSharingApi:
             }
             timestamp_codes = set(normalized_timestamps)
             event_codes = (updated_codes | timestamp_codes) & EVENT_SOURCE_CODES
-            ambiguous_event_snapshot = len(event_codes) > 1
+            ambiguous_event_snapshot = (
+                len(event_codes) > 1
+                and monotonic() - subscribed_at <= EVENT_SNAPSHOT_GRACE_SECONDS
+            )
 
             for code, timestamp_ms in normalized_timestamps.items():
                 if ambiguous_event_snapshot and code in EVENT_SOURCE_CODES:
                     continue
                 self._timestamps_ms[code] = timestamp_ms
 
-            if len(event_codes) == 1:
-                event_code = next(iter(event_codes))
-                if event_code not in timestamp_codes:
-                    received_ms = int(time.time() * 1000)
+            if not ambiguous_event_snapshot:
+                received_ms = int(time.time() * 1000)
+                for event_code in sorted(event_codes - timestamp_codes):
                     self._timestamps_ms[event_code] = max(
                         received_ms,
                         self._timestamps_ms.get(event_code, -1) + 1,

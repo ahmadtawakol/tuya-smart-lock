@@ -307,21 +307,54 @@ async def test_multi_event_snapshot_does_not_replay_historical_events(hass) -> N
     )
     api, _, _ = _api(hass, device)
     updates = []
-    unsubscribe = api.async_subscribe(updates.append)
-
-    async_dispatcher_send(
-        hass,
-        f"tuya_entry_update_{DEVICE_ID}",
-        ["doorbell", "open_inside", "unlock_face"],
-        {
-            "doorbell": 1_784_000_000_001,
-            "open_inside": 1_784_000_000_002,
-            "unlock_face": 1_784_000_000_003,
-        },
-    )
-    await hass.async_block_till_done()
+    with patch(
+        "custom_components.tuya_smart_lock.sharing_api.monotonic",
+        return_value=100.0,
+    ):
+        unsubscribe = api.async_subscribe(updates.append)
+        async_dispatcher_send(
+            hass,
+            f"tuya_entry_update_{DEVICE_ID}",
+            ["doorbell", "open_inside", "unlock_face"],
+            {
+                "doorbell": 1_784_000_000_001,
+                "open_inside": 1_784_000_000_002,
+                "unlock_face": 1_784_000_000_003,
+            },
+        )
+        await hass.async_block_till_done()
 
     assert updates[0]["doorbell"].timestamp_ms is None
     assert updates[0]["open_inside"].timestamp_ms is None
     assert updates[0]["unlock_face"].timestamp_ms is None
+    unsubscribe()
+
+
+async def test_live_doorbell_and_open_batch_emits_both_events(hass) -> None:
+    """A later real-world multi-event report is not mistaken for a snapshot."""
+    device = _device(status={"doorbell": True, "open_inside": True})
+    api, _, _ = _api(hass, device)
+    updates = []
+
+    with (
+        patch(
+            "custom_components.tuya_smart_lock.sharing_api.monotonic",
+            side_effect=[100.0, 110.0],
+        ),
+        patch(
+            "custom_components.tuya_smart_lock.sharing_api.time.time",
+            return_value=1_785_000_000.789,
+        ),
+    ):
+        unsubscribe = api.async_subscribe(updates.append)
+        async_dispatcher_send(
+            hass,
+            f"tuya_entry_update_{DEVICE_ID}",
+            ["doorbell", "open_inside"],
+            {},
+        )
+        await hass.async_block_till_done()
+
+    assert updates[0]["doorbell"].timestamp_ms == 1_785_000_000_789
+    assert updates[0]["open_inside"].timestamp_ms == 1_785_000_000_789
     unsubscribe()
