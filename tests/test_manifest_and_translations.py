@@ -8,6 +8,7 @@ import yaml
 from custom_components.tuya_smart_lock.binary_sensor import (
     TuyaSmartLockHijackBinarySensor,
 )
+from custom_components.tuya_smart_lock.camera import TuyaSmartLockCamera
 from custom_components.tuya_smart_lock.event import (
     TuyaSmartLockAlarmEvent,
     TuyaSmartLockDoorbellEvent,
@@ -36,7 +37,7 @@ def test_manifest_describes_release_and_fork_ownership() -> None:
     """The integration manifest publishes the intended release metadata."""
     manifest = _load_json(INTEGRATION / "manifest.json")
 
-    assert manifest["version"] == "1.2.4"
+    assert manifest["version"] == "1.3.0-beta.1"
     assert manifest["integration_type"] == "device"
     assert manifest["iot_class"] == "cloud_push"
     assert manifest["config_flow"] is True
@@ -44,6 +45,7 @@ def test_manifest_describes_release_and_fork_ownership() -> None:
     assert manifest["issue_tracker"] == f"{REPOSITORY}/issues"
     assert manifest["codeowners"] == ["@nicolasglg", "@ahmadtawakol"]
     assert manifest["after_dependencies"] == ["tuya"]
+    assert manifest["dependencies"] == ["ffmpeg"]
     assert manifest["requirements"] == []
 
 
@@ -180,6 +182,25 @@ def test_readme_defaults_to_free_app_auth_and_scopes_verified_control() -> None:
     assert "Access ID, Access Secret" in configuration
 
 
+def test_readme_documents_private_experimental_camera_snapshots() -> None:
+    """Camera documentation stays single-stream, opt-in, and privacy conscious."""
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    camera = readme.split("## Camera snapshots (`v1.3.0-beta.1`)", maxsplit=1)[1].split(
+        "## Runtime behavior", maxsplit=1
+    )[0]
+    camera = " ".join(camera.split())
+
+    assert "one stream allocation method per device" in camera
+    assert "no lens or channel parameter" in camera
+    assert "composite image" in camera
+    assert "allowlist_external_dirs" in camera
+    assert "/config/snapshots" in camera
+    assert "trigger: event.received" in camera
+    assert "action: camera.snapshot" in camera
+    assert "never writes images automatically" in camera
+    assert "stream URL remains internal" in camera
+
+
 def test_ci_runs_tests_hacs_validation_and_hassfest() -> None:
     """CI validates Python, HACS integration metadata, and HA metadata."""
     workflow = yaml.safe_load(
@@ -270,6 +291,7 @@ def test_entity_translations_are_complete_and_used_by_production_classes() -> No
     """Every shipped entity uses one matching, live English translation key."""
     strings = _load_json(INTEGRATION / "strings.json")
     expected = {
+        "camera": {"camera": {"name": "Camera"}},
         "lock": {"lock": {"name": "Lock"}},
         "sensor": {"battery": {"name": "Battery"}},
         "binary_sensor": {"duress": {"name": "Duress"}},
@@ -281,6 +303,7 @@ def test_entity_translations_are_complete_and_used_by_production_classes() -> No
         },
     }
     production_classes = {
+        "camera": {"camera": TuyaSmartLockCamera},
         "lock": {"lock": TuyaSmartLock},
         "sensor": {"battery": TuyaSmartLockBatterySensor},
         "binary_sensor": {"duress": TuyaSmartLockHijackBinarySensor},

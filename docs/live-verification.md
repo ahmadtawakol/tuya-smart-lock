@@ -24,6 +24,10 @@ credentials or device identifiers and must stay that way.
 - [ ] Confirm all expected entities are available.
 - [ ] Compare the lock entity's locked/unlocked state with the physical door.
 - [ ] Compare the battery sensor with the Tuya Smart or Smart Life app.
+- [ ] Open the camera entity and record whether it returns the outside lens,
+      inside lens, a composite image, or no stream.
+- [ ] Take one on-demand snapshot into a private allowlisted directory and
+      confirm the temporary stream URL never appears in state or logs.
 - [ ] Confirm a missing or malformed datapoint becomes unknown instead of a
       misleading state, if this can be observed without modifying the device.
 
@@ -41,6 +45,8 @@ credentials or device identifiers and must stay that way.
       remains beside the door and confirm both physical movement and final state.
 - [ ] Verify an inside-open action emits the **Opened inside** event.
 - [ ] Ring the doorbell and verify a **Doorbell** `ring` event.
+- [ ] Trigger a private `camera.snapshot` automation from a doorbell event and
+      confirm the resulting image corresponds to the event time.
 - [ ] Trigger only a safe, documented alarm condition and verify the **Lock
       alarm** event and sanitized reason, if supported by the device.
 

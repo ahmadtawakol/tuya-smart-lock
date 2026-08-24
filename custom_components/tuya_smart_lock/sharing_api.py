@@ -4,7 +4,7 @@ import time
 from asyncio import Lock
 from collections.abc import Callable, Mapping
 from time import monotonic
-from typing import Any
+from typing import Any, Literal
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
@@ -207,6 +207,23 @@ class TuyaSharingApi:
             if error.__class__.__module__.startswith("tuya_sharing"):
                 raise TuyaCommandError("Tuya lock command failed.") from None
             raise
+
+    async def async_get_stream_source(
+        self,
+        device_id: str,
+        stream_type: Literal["flv", "hls", "rtmp", "rtsp"] = "rtsp",
+    ) -> str | None:
+        """Allocate a temporary camera stream through Device Sharing."""
+        await self.async_get_properties(device_id)
+        allocator = getattr(self._manager, "get_device_stream_allocate", None)
+        if not callable(allocator):
+            raise TuyaApiError("Tuya camera streaming is unavailable.")
+        source = await self._async_sdk_call(
+            allocator,
+            self.device_id,
+            stream_type,
+        )
+        return source if isinstance(source, str) and source else None
 
     @callback
     def async_subscribe(

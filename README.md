@@ -40,6 +40,7 @@ been live-verified for this release.
 | Entity | Home Assistant platform | Source and behavior |
 | --- | --- | --- |
 | Lock | `lock` | `lock_motor_state`: exact boolean `false` is locked and exact boolean `true` is unlocked. Missing or non-boolean data is unknown. Lock/unlock commands wait for bounded physical-state confirmation. |
+| Camera | `camera` | Experimental temporary RTSP stream allocated through the official Tuya session. Home Assistant uses FFmpeg for live viewing and on-demand JPEG snapshots. No stream URL or image is stored by the integration. |
 | Battery | `sensor` | Percentage from `battery_percentage`, falling back to `residual_electricity`; only finite numeric values are accepted. |
 | Duress | `binary_sensor` | Safety state from `hijack`; only exact booleans are accepted. |
 | Doorbell | `event` | Emits the `ring` event type from `doorbell`. |
@@ -127,6 +128,54 @@ identities, open its integration menu, select **Reconfigure**, and confirm the
 matching lock from the official Tuya session. The old Access ID, Access Secret,
 and API region are then removed from that config entry.
 
+## Camera snapshots (`v1.3.0-beta.1`)
+
+Device Sharing exposes one stream allocation method per device, with no lens or
+channel parameter. The camera entity therefore exposes the single stream Tuya
+returns. A dual-camera lock might return a composite image containing both
+inside and outside views, only its primary camera, or no authorized stream. If
+it returns a stable composite layout, separate cropped image entities can be
+considered after a real frame is inspected.
+
+The integration never writes images automatically. To capture a private JPEG
+when the doorbell rings or the door opens from inside, first allow a non-public
+directory in `configuration.yaml`:
+
+```yaml
+homeassistant:
+  allowlist_external_dirs:
+    - /config/snapshots
+```
+
+Then create an automation and replace the example entity IDs with yours:
+
+```yaml
+- alias: "Save Tuya lock event snapshot"
+  triggers:
+    - trigger: event.received
+      target:
+        entity_id: event.front_door_doorbell
+      options:
+        event_type:
+          - ring
+    - trigger: event.received
+      target:
+        entity_id: event.front_door_opened_inside
+      options:
+        event_type:
+          - opened
+  actions:
+    - action: camera.snapshot
+      target:
+        entity_id: camera.front_door_camera
+      data:
+        filename: >-
+          /config/snapshots/front-door-{{ now().strftime('%Y%m%d-%H%M%S') }}.jpg
+```
+
+The temporary authenticated stream URL remains internal to Home Assistant and
+must never be copied into logs, notifications, diagnostics, or dashboards.
+
 ## Runtime behavior and limitations
 
 - This integration remains cloud-dependent; physical lock functions remain
@@ -152,8 +201,9 @@ and API region are then removed from that config entry.
   never assume the door changed state.
 - Legacy `v1.1.0` entries retain the paid ticket-based OpenAPI path until they
   are reconfigured.
-- Camera streams, on-screen display (OSD), password/credential management, and
-  other video-lock administration are outside this integration's scope.
+- Recording, on-screen display (OSD), password/credential management, and other
+  video-lock administration remain outside this integration's scope;
+  `v1.3.0-beta.1` adds only one temporary stream and on-demand snapshots.
 
 For cautious on-device validation, use the
 [live verification checklist](docs/live-verification.md).

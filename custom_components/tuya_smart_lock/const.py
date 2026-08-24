@@ -8,6 +8,7 @@ CONFIRMATION_DELAYS = (2, 3, 5)
 
 PLATFORMS = (
     Platform.LOCK,
+    Platform.CAMERA,
     Platform.SENSOR,
     Platform.BINARY_SENSOR,
     Platform.EVENT,

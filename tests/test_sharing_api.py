@@ -122,6 +122,28 @@ async def test_sdk_command_error_is_sanitized(hass, caplog) -> None:
     assert "raw-account" not in caplog.text
 
 
+async def test_stream_source_uses_official_tuya_allocator(hass) -> None:
+    """Camera streaming reuses the free app-authenticated manager."""
+    api, manager, _ = _api(hass)
+    manager.get_device_stream_allocate.return_value = (
+        "rtsp://temporary-user:temporary-token@camera.example/stream"
+    )
+
+    source = await api.async_get_stream_source(DEVICE_ID, "rtsp")
+
+    assert source == "rtsp://temporary-user:temporary-token@camera.example/stream"
+    manager.get_device_stream_allocate.assert_called_once_with(DEVICE_ID, "rtsp")
+
+
+@pytest.mark.parametrize("result", [None, "", 123])
+async def test_invalid_stream_allocation_returns_none(hass, result) -> None:
+    """Malformed stream responses cannot leak into Home Assistant or FFmpeg."""
+    api, manager, _ = _api(hass)
+    manager.get_device_stream_allocate.return_value = result
+
+    assert await api.async_get_stream_source(DEVICE_ID, "rtsp") is None
+
+
 async def test_adapter_resolves_reloaded_official_manager(hass) -> None:
     """Official Tuya reloads replace the manager without requiring our reload."""
     api, old_manager, official_entry = _api(hass)
