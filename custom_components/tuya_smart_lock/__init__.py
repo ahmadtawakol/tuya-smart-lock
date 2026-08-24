@@ -7,6 +7,7 @@ from homeassistant.config_entries import ConfigEntry, ConfigEntryState
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.helpers.update_coordinator import UpdateFailed
 
 from .const import (
     CONF_ACCESS_ID,
@@ -39,6 +40,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     device_id = entry.data[CONF_DEVICE_ID]
     device_name = entry.data[CONF_DEVICE_NAME]
     sharing_entry_id = entry.data.get(CONF_TUYA_ENTRY_ID)
+    sharing_api: TuyaSharingApi | None = None
     if isinstance(sharing_entry_id, str):
         official_entry = hass.config_entries.async_get_entry(sharing_entry_id)
         if (
@@ -68,7 +70,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     )
     setup_complete = False
     try:
-        await coordinator.async_config_entry_first_refresh()
+        try:
+            await coordinator.async_config_entry_first_refresh()
+        except ConfigEntryNotReady:
+            if sharing_api is None:
+                raise
+            coordinator.async_set_updated_data(sharing_api.cached_properties())
+            coordinator.async_set_update_error(
+                UpdateFailed("The Tuya smart lock is offline.")
+            )
         hass.data.setdefault(DOMAIN, {})[entry.entry_id] = TuyaSmartLockRuntimeData(
             api=api,
             coordinator=coordinator,

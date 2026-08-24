@@ -243,8 +243,10 @@ async def test_sharing_setup_waits_for_official_tuya(hass, official_entry) -> No
         await async_setup_entry(hass, entry)
 
 
-async def test_failed_sharing_refresh_unsubscribes_push_listener(hass) -> None:
-    """A failed setup cannot leak a dispatcher listener or partial runtime."""
+async def test_offline_sharing_setup_stays_loaded_and_keeps_push_listener(
+    hass,
+) -> None:
+    """An offline startup remains subscribed and can recover immediately."""
     entry = MockConfigEntry(
         domain=DOMAIN,
         entry_id="sharing-entry",
@@ -264,12 +266,15 @@ async def test_failed_sharing_refresh_unsubscribes_push_listener(hass) -> None:
     official_entry.runtime_data = SimpleNamespace(manager=Mock(name="manager"))
     api = Mock(name="sharing_api")
     api.async_prepare = AsyncMock()
+    cached_properties = {"lock_motor_state": Mock(name="motor_property")}
+    api.cached_properties.return_value = cached_properties
     unsubscribe = Mock(name="unsubscribe")
     api.async_subscribe.return_value = unsubscribe
     coordinator = Mock(name="coordinator")
     coordinator.async_config_entry_first_refresh = AsyncMock(
         side_effect=ConfigEntryNotReady("initial sharing refresh failed")
     )
+    forward = AsyncMock()
 
     with (
         patch.object(
@@ -285,12 +290,19 @@ async def test_failed_sharing_refresh_unsubscribes_push_listener(hass) -> None:
             "custom_components.tuya_smart_lock.TuyaSmartLockCoordinator",
             return_value=coordinator,
         ),
-        pytest.raises(ConfigEntryNotReady, match="initial sharing refresh failed"),
+        patch.object(
+            hass.config_entries,
+            "async_forward_entry_setups",
+            new=forward,
+        ),
     ):
-        await async_setup_entry(hass, entry)
+        assert await async_setup_entry(hass, entry) is True
 
-    unsubscribe.assert_called_once_with()
-    assert entry.entry_id not in hass.data.get(DOMAIN, {})
+    coordinator.async_set_updated_data.assert_called_once_with(cached_properties)
+    coordinator.async_set_update_error.assert_called_once()
+    forward.assert_awaited_once_with(entry, PLATFORMS)
+    unsubscribe.assert_not_called()
+    assert hass.data[DOMAIN][entry.entry_id].unsubscribe is unsubscribe
 
 
 @pytest.mark.parametrize("unload_ok", [True, False])

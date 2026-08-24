@@ -78,6 +78,10 @@ class TuyaSharingApi:
             if isinstance(code, str) and code
         }
 
+    def cached_properties(self) -> dict[str, TuyaProperty]:
+        """Return retained state even while the physical lock is offline."""
+        return self._properties()
+
     async def _async_sdk_call(self, target: Callable[..., Any], *args: Any) -> Any:
         """Run one blocking Device Sharing call behind a sanitized boundary."""
         try:

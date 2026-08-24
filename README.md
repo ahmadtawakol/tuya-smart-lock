@@ -137,8 +137,9 @@ and API region are then removed from that config entry.
 - The configured lock is explicitly subscribed to its Device Sharing topic even
   when the official integration creates no entity for it. If Home Assistant
   starts while the lock is offline, a targeted device query refreshes only that
-  stale cache entry and online presence recovers without reloading official
-  Tuya.
+  stale cache entry. The custom integration finishes loading as unavailable,
+  keeps its listener attached, and recovers on the online presence update
+  without reloading either integration.
 - When the Device Sharing SDK omits a timestamp, an individual live event gets a
   monotonic receipt timestamp. Ambiguous updates containing several event
   sources are treated as snapshots and suppressed instead of replaying every
