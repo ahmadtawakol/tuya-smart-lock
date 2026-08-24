@@ -1,5 +1,6 @@
 """Experimental camera support for Tuya video locks."""
 
+import logging
 from typing import cast
 
 from homeassistant.components import ffmpeg
@@ -13,6 +14,9 @@ from .const import CONF_TUYA_ENTRY_ID, DOMAIN
 from .entity import TuyaSmartLockEntity
 from .errors import TuyaApiError
 from .sharing_api import TuyaSharingApi
+
+_LOGGER = logging.getLogger(__name__)
+STREAM_TYPES = ("rtsp", "hls", "flv", "rtmp")
 
 
 async def async_setup_entry(
@@ -60,13 +64,27 @@ class TuyaSmartLockCamera(TuyaSmartLockEntity, Camera):
         Camera.__init__(self)
         self.api = api
         self._device_id = device_id
+        self._stream_failure_reported = False
 
     async def stream_source(self) -> str | None:
         """Return a fresh temporary RTSP stream URL."""
-        try:
-            return await self.api.async_get_stream_source(self._device_id, "rtsp")
-        except TuyaApiError:
-            return None
+        for stream_type in STREAM_TYPES:
+            try:
+                source = await self.api.async_get_stream_source(
+                    self._device_id,
+                    stream_type,
+                )
+            except TuyaApiError:
+                continue
+            if source is not None:
+                self._stream_failure_reported = False
+                return source
+        if not self._stream_failure_reported:
+            _LOGGER.warning(
+                "Tuya did not provide a supported camera stream for this video lock"
+            )
+            self._stream_failure_reported = True
+        return None
 
     async def async_camera_image(
         self,

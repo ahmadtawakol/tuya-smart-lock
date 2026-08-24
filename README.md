@@ -40,7 +40,7 @@ been live-verified for this release.
 | Entity | Home Assistant platform | Source and behavior |
 | --- | --- | --- |
 | Lock | `lock` | `lock_motor_state`: exact boolean `false` is locked and exact boolean `true` is unlocked. Missing or non-boolean data is unknown. Lock/unlock commands wait for bounded physical-state confirmation. |
-| Camera | `camera` | Experimental temporary RTSP stream allocated through the official Tuya session. Home Assistant uses FFmpeg for live viewing and on-demand JPEG snapshots. No stream URL or image is stored by the integration. |
+| Camera | `camera` | Experimental temporary stream allocated through the official Tuya session. Home Assistant uses FFmpeg for live viewing and on-demand JPEG snapshots. No stream URL or image is stored by the integration. |
 | Battery | `sensor` | Percentage from `battery_percentage`, falling back to `residual_electricity`; only finite numeric values are accepted. |
 | Duress | `binary_sensor` | Safety state from `hijack`; only exact booleans are accepted. |
 | Doorbell | `event` | Emits the `ring` event type from `doorbell`. |
@@ -128,7 +128,7 @@ identities, open its integration menu, select **Reconfigure**, and confirm the
 matching lock from the official Tuya session. The old Access ID, Access Secret,
 and API region are then removed from that config entry.
 
-## Camera snapshots (`v1.3.0-beta.1`)
+## Camera snapshots (`v1.3.0-beta.2`)
 
 Device Sharing exposes one stream allocation method per device, with no lens or
 channel parameter. The camera entity therefore exposes the single stream Tuya
@@ -136,6 +136,12 @@ returns. A dual-camera lock might return a composite image containing both
 inside and outside views, only its primary camera, or no authorized stream. If
 it returns a stable composite layout, separate cropped image entities can be
 considered after a real frame is inspected.
+
+The integration tries RTSP, HLS, FLV, and RTMP in that order. Battery video
+locks can expose video only while awake, so test the entity immediately after ringing
+the doorbell as well as while idle. If every format fails, Home Assistant writes
+one fixed diagnostic warning without the device ID, temporary URL, token, or
+upstream error text.
 
 The integration never writes images automatically. To capture a private JPEG
 when the doorbell rings or the door opens from inside, first allow a non-public
@@ -203,7 +209,7 @@ must never be copied into logs, notifications, diagnostics, or dashboards.
   are reconfigured.
 - Recording, on-screen display (OSD), password/credential management, and other
   video-lock administration remain outside this integration's scope;
-  `v1.3.0-beta.1` adds only one temporary stream and on-demand snapshots.
+  `v1.3.0-beta.2` adds only one temporary stream and on-demand snapshots.
 
 For cautious on-device validation, use the
 [live verification checklist](docs/live-verification.md).

@@ -37,7 +37,7 @@ def test_manifest_describes_release_and_fork_ownership() -> None:
     """The integration manifest publishes the intended release metadata."""
     manifest = _load_json(INTEGRATION / "manifest.json")
 
-    assert manifest["version"] == "1.3.0-beta.1"
+    assert manifest["version"] == "1.3.0-beta.2"
     assert manifest["integration_type"] == "device"
     assert manifest["iot_class"] == "cloud_push"
     assert manifest["config_flow"] is True
@@ -185,12 +185,14 @@ def test_readme_defaults_to_free_app_auth_and_scopes_verified_control() -> None:
 def test_readme_documents_private_experimental_camera_snapshots() -> None:
     """Camera documentation stays single-stream, opt-in, and privacy conscious."""
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
-    camera = readme.split("## Camera snapshots (`v1.3.0-beta.1`)", maxsplit=1)[1].split(
+    camera = readme.split("## Camera snapshots (`v1.3.0-beta.2`)", maxsplit=1)[1].split(
         "## Runtime behavior", maxsplit=1
     )[0]
     camera = " ".join(camera.split())
 
     assert "one stream allocation method per device" in camera
+    assert "RTSP, HLS, FLV, and RTMP" in camera
+    assert "immediately after ringing" in camera
     assert "no lens or channel parameter" in camera
     assert "composite image" in camera
     assert "allowlist_external_dirs" in camera

@@ -12,6 +12,7 @@ from custom_components.tuya_smart_lock.const import (
     CONF_TUYA_ENTRY_ID,
     DOMAIN,
 )
+from custom_components.tuya_smart_lock.errors import TuyaApiError
 
 ENTRY_ID = "entry-123"
 DEVICE_ID = "lock-123"
@@ -78,6 +79,24 @@ async def test_stream_source_delegates_without_exposing_url_as_state(hass) -> No
     assert "secret" not in repr(entity.device_info)
 
 
+async def test_stream_source_falls_back_across_tuya_formats(hass) -> None:
+    """A video lock that rejects RTSP can still provide HLS or another format."""
+    api, add_entities = await _setup_camera(hass)
+    entity = add_entities.call_args.args[0][0]
+    api.async_get_stream_source.side_effect = [
+        TuyaApiError("safe RTSP rejection"),
+        None,
+        "flv://temporary/stream",
+    ]
+
+    assert await entity.stream_source() == "flv://temporary/stream"
+    assert api.async_get_stream_source.await_args_list == [
+        ((DEVICE_ID, "rtsp"),),
+        ((DEVICE_ID, "hls"),),
+        ((DEVICE_ID, "flv"),),
+    ]
+
+
 async def test_camera_image_uses_home_assistant_ffmpeg(hass) -> None:
     """Snapshots are extracted on demand without persisting image bytes."""
     api, add_entities = await _setup_camera(hass)
@@ -100,8 +119,10 @@ async def test_camera_image_uses_home_assistant_ffmpeg(hass) -> None:
     )
 
 
-async def test_missing_stream_returns_no_snapshot(hass) -> None:
-    """A sleeping or unsupported video lock returns no stale image."""
+async def test_missing_stream_returns_no_snapshot_with_one_safe_warning(
+    hass, caplog
+) -> None:
+    """An unsupported video lock returns no image and no credential detail."""
     api, add_entities = await _setup_camera(hass)
     entity = add_entities.call_args.args[0][0]
     entity.hass = hass
@@ -112,5 +133,8 @@ async def test_missing_stream_returns_no_snapshot(hass) -> None:
         new=AsyncMock(),
     ) as get_image:
         assert await entity.async_camera_image() is None
+        assert await entity.async_camera_image() is None
 
     get_image.assert_not_awaited()
+    assert caplog.text.count("Tuya did not provide a supported camera stream") == 1
+    assert "rtsp://" not in caplog.text
