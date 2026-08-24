@@ -128,7 +128,7 @@ identities, open its integration menu, select **Reconfigure**, and confirm the
 matching lock from the official Tuya session. The old Access ID, Access Secret,
 and API region are then removed from that config entry.
 
-## Camera snapshots (`v1.3.0-beta.2`)
+## Camera snapshots (`v1.3.0-beta.3`)
 
 Device Sharing exposes one stream allocation method per device, with no lens or
 channel parameter. The camera entity therefore exposes the single stream Tuya
@@ -143,9 +143,22 @@ the doorbell as well as while idle. If every format fails, Home Assistant writes
 one fixed diagnostic warning without the device ID, temporary URL, token, or
 upstream error text.
 
-The integration never writes images automatically. To capture a private JPEG
-when the doorbell rings or the door opens from inside, first allow a non-public
-directory in `configuration.yaml`:
+On every new doorbell event, the camera automatically probes those formats and
+tries to decode one JPEG while the lock is awake. A successful image is retained
+in memory only and becomes the Camera entity's still image until the next ring
+or restart. The entity attributes `last_event_snapshot_status` and
+`last_event_snapshot_at` show the unattended result. Status is one of `idle`,
+`capturing`, `captured`, `stream_unavailable`, or `capture_failed`.
+
+The fixed log outcomes are:
+
+- `Captured Tuya doorbell camera snapshot`
+- `Tuya doorbell snapshot test found no supported stream`
+- `Tuya doorbell snapshot test could not decode stream`
+
+The integration never writes images to disk automatically. To persist the
+in-memory event image to a private JPEG, first allow a non-public directory in
+`configuration.yaml`:
 
 ```yaml
 homeassistant:
@@ -209,7 +222,7 @@ must never be copied into logs, notifications, diagnostics, or dashboards.
   are reconfigured.
 - Recording, on-screen display (OSD), password/credential management, and other
   video-lock administration remain outside this integration's scope;
-  `v1.3.0-beta.2` adds only one temporary stream and on-demand snapshots.
+  `v1.3.0-beta.3` adds only one temporary stream and in-memory/on-demand snapshots.
 
 For cautious on-device validation, use the
 [live verification checklist](docs/live-verification.md).

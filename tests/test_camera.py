@@ -1,5 +1,6 @@
 """Tests for the experimental Device Sharing camera entity."""
 
+import logging
 from unittest.mock import AsyncMock, Mock, patch
 
 from pytest_homeassistant_custom_component.common import MockConfigEntry
@@ -13,6 +14,7 @@ from custom_components.tuya_smart_lock.const import (
     DOMAIN,
 )
 from custom_components.tuya_smart_lock.errors import TuyaApiError
+from custom_components.tuya_smart_lock.models import TuyaProperty
 
 ENTRY_ID = "entry-123"
 DEVICE_ID = "lock-123"
@@ -34,6 +36,8 @@ async def _setup_camera(hass, *, sharing: bool = True):
     api.async_get_stream_source = AsyncMock()
     coordinator = Mock(name="coordinator")
     coordinator.last_update_success = True
+    coordinator.data = {}
+    coordinator.async_add_listener.return_value = Mock(name="remove_listener")
     hass.data[DOMAIN] = {
         ENTRY_ID: TuyaSmartLockRuntimeData(
             api=api,
@@ -138,3 +142,67 @@ async def test_missing_stream_returns_no_snapshot_with_one_safe_warning(
     get_image.assert_not_awaited()
     assert caplog.text.count("Tuya did not provide a supported camera stream") == 1
     assert "rtsp://" not in caplog.text
+
+
+async def test_existing_doorbell_state_is_seeded_without_capture(hass) -> None:
+    """Historical doorbell state cannot take a camera image on startup."""
+    api, add_entities = await _setup_camera(hass)
+    entity = add_entities.call_args.args[0][0]
+    entity.hass = hass
+    entity.coordinator.data = {"doorbell": TuyaProperty("doorbell", True, 100, None)}
+
+    await entity.async_added_to_hass()
+    await hass.async_block_till_done()
+
+    api.async_get_stream_source.assert_not_awaited()
+    assert entity.extra_state_attributes["last_event_snapshot_status"] == "idle"
+
+
+async def test_new_doorbell_event_caches_one_in_memory_snapshot(hass, caplog) -> None:
+    """A real ring automatically probes and retains a private JPEG in memory."""
+    api, add_entities = await _setup_camera(hass)
+    entity = add_entities.call_args.args[0][0]
+    entity.hass = hass
+    entity.async_write_ha_state = Mock()
+    await entity.async_added_to_hass()
+    api.async_get_stream_source.return_value = "rtsp://temporary/stream"
+
+    with (
+        caplog.at_level(logging.INFO),
+        patch(
+            "custom_components.tuya_smart_lock.camera.ffmpeg.async_get_image",
+            new=AsyncMock(return_value=b"doorbell-jpeg"),
+        ) as get_image,
+    ):
+        entity.coordinator.data = {
+            "doorbell": TuyaProperty("doorbell", True, 101, None)
+        }
+        entity._handle_coordinator_update()
+        await hass.async_block_till_done()
+
+    assert entity.extra_state_attributes["last_event_snapshot_status"] == "captured"
+    assert entity.extra_state_attributes["last_event_snapshot_at"] is not None
+    assert await entity.async_camera_image() == b"doorbell-jpeg"
+    get_image.assert_awaited_once()
+    assert "Captured Tuya doorbell camera snapshot" in caplog.text
+    assert "rtsp://" not in caplog.text
+
+
+async def test_doorbell_probe_reports_no_authorized_stream_safely(hass, caplog) -> None:
+    """The unattended test leaves a fixed actionable result without secrets."""
+    api, add_entities = await _setup_camera(hass)
+    entity = add_entities.call_args.args[0][0]
+    entity.hass = hass
+    entity.async_write_ha_state = Mock()
+    await entity.async_added_to_hass()
+    api.async_get_stream_source.return_value = None
+
+    entity.coordinator.data = {"doorbell": TuyaProperty("doorbell", True, 101, None)}
+    entity._handle_coordinator_update()
+    await hass.async_block_till_done()
+
+    assert entity.extra_state_attributes["last_event_snapshot_status"] == (
+        "stream_unavailable"
+    )
+    assert "Tuya doorbell snapshot test found no supported stream" in caplog.text
+    assert "token" not in caplog.text
