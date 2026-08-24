@@ -57,3 +57,7 @@ UNLOCK_EVENT_TYPES_BY_CODE = {
     "unlock_phone_remote": "phone_remote",
     "unlock_dynamic": "dynamic_code",
 }
+
+EVENT_SOURCE_CODES = frozenset(
+    {"doorbell", "open_inside", "alarm_lock", *UNLOCK_EVENT_TYPES_BY_CODE}
+)

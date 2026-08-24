@@ -134,6 +134,10 @@ and API region are then removed from that config entry.
 - State comes from the official Tuya integration's Device Sharing cache. MQTT
   updates are forwarded immediately with datapoint timestamps, with a 30-second
   cached-state refresh as a fallback.
+- When the Device Sharing SDK omits a timestamp, an individual live event gets a
+  monotonic receipt timestamp. Ambiguous updates containing several event
+  sources are treated as snapshots and suppressed instead of replaying every
+  historical event together.
 - Commands send the standard `lock_motor_state` datapoint through Device
   Sharing. After sending, the integration checks after bounded delays of 2, 3,
   and 5 seconds and reports success only when the physical motor state is

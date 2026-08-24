@@ -1,7 +1,7 @@
 """Tests for the free Tuya Device Sharing adapter."""
 
 from types import SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 import pytest
 from homeassistant.helpers.dispatcher import async_dispatcher_send
@@ -155,3 +155,88 @@ async def test_official_push_preserves_event_timestamp(hass) -> None:
     assert updates[0]["doorbell"].timestamp_ms == 1_785_000_000_123
     unsubscribe()
     manager.send_commands.assert_not_called()
+
+
+async def test_missing_sdk_timestamp_gets_monotonic_receipt_time(hass) -> None:
+    """Code-based Tuya reports still produce repeatable event occurrences."""
+    device = _device(status={"unlock_fingerprint": 7})
+    api, _, _ = _api(hass, device)
+    updates = []
+    unsubscribe = api.async_subscribe(updates.append)
+
+    with patch(
+        "custom_components.tuya_smart_lock.sharing_api.time.time",
+        return_value=1_785_000_000.123,
+    ):
+        async_dispatcher_send(
+            hass,
+            f"tuya_entry_update_{DEVICE_ID}",
+            ["unlock_fingerprint"],
+            {},
+        )
+        async_dispatcher_send(
+            hass,
+            f"tuya_entry_update_{DEVICE_ID}",
+            ["unlock_fingerprint"],
+            {},
+        )
+        await hass.async_block_till_done()
+
+    first = updates[0]["unlock_fingerprint"].timestamp_ms
+    second = updates[1]["unlock_fingerprint"].timestamp_ms
+    assert first == 1_785_000_000_123
+    assert second == first + 1
+    unsubscribe()
+
+
+async def test_invalid_sdk_event_timestamp_falls_back_to_receipt_time(hass) -> None:
+    """Malformed optional SDK metadata cannot suppress a real event report."""
+    api, _, _ = _api(hass, _device(status={"doorbell": True}))
+    updates = []
+    unsubscribe = api.async_subscribe(updates.append)
+
+    with patch(
+        "custom_components.tuya_smart_lock.sharing_api.time.time",
+        return_value=1_785_000_000.456,
+    ):
+        async_dispatcher_send(
+            hass,
+            f"tuya_entry_update_{DEVICE_ID}",
+            ["doorbell"],
+            {"doorbell": "not-a-timestamp"},
+        )
+        await hass.async_block_till_done()
+
+    assert updates[0]["doorbell"].timestamp_ms == 1_785_000_000_456
+    unsubscribe()
+
+
+async def test_multi_event_snapshot_does_not_replay_historical_events(hass) -> None:
+    """One bulk refresh cannot emit every stale lock event simultaneously."""
+    device = _device(
+        status={
+            "doorbell": True,
+            "open_inside": True,
+            "unlock_face": 3,
+        }
+    )
+    api, _, _ = _api(hass, device)
+    updates = []
+    unsubscribe = api.async_subscribe(updates.append)
+
+    async_dispatcher_send(
+        hass,
+        f"tuya_entry_update_{DEVICE_ID}",
+        ["doorbell", "open_inside", "unlock_face"],
+        {
+            "doorbell": 1_784_000_000_001,
+            "open_inside": 1_784_000_000_002,
+            "unlock_face": 1_784_000_000_003,
+        },
+    )
+    await hass.async_block_till_done()
+
+    assert updates[0]["doorbell"].timestamp_ms is None
+    assert updates[0]["open_inside"].timestamp_ms is None
+    assert updates[0]["unlock_face"].timestamp_ms is None
+    unsubscribe()

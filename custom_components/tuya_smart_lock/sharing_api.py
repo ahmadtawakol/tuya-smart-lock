@@ -1,5 +1,6 @@
 """Adapter for Home Assistant's free Tuya Device Sharing session."""
 
+import time
 from collections.abc import Callable, Mapping
 from typing import Any
 
@@ -8,6 +9,7 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from requests import RequestException
 
+from .const import EVENT_SOURCE_CODES
 from .errors import (
     TuyaApiError,
     TuyaCommandError,
@@ -123,11 +125,34 @@ class TuyaSharingApi:
             updated_status_properties: list[str] | None = None,
             dp_timestamps: Mapping[str, object] | None = None,
         ) -> None:
-            if dp_timestamps is not None:
-                for code, value in dp_timestamps.items():
-                    timestamp_ms = normalize_timestamp_ms(value)
-                    if isinstance(code, str) and timestamp_ms is not None:
-                        self._timestamps_ms[code] = timestamp_ms
+            updated_codes = {
+                code
+                for code in updated_status_properties or []
+                if isinstance(code, str)
+            }
+            normalized_timestamps = {
+                code: timestamp_ms
+                for code, value in (dp_timestamps or {}).items()
+                if isinstance(code, str)
+                and (timestamp_ms := normalize_timestamp_ms(value)) is not None
+            }
+            timestamp_codes = set(normalized_timestamps)
+            event_codes = (updated_codes | timestamp_codes) & EVENT_SOURCE_CODES
+            ambiguous_event_snapshot = len(event_codes) > 1
+
+            for code, timestamp_ms in normalized_timestamps.items():
+                if ambiguous_event_snapshot and code in EVENT_SOURCE_CODES:
+                    continue
+                self._timestamps_ms[code] = timestamp_ms
+
+            if len(event_codes) == 1:
+                event_code = next(iter(event_codes))
+                if event_code not in timestamp_codes:
+                    received_ms = int(time.time() * 1000)
+                    self._timestamps_ms[event_code] = max(
+                        received_ms,
+                        self._timestamps_ms.get(event_code, -1) + 1,
+                    )
             try:
                 update_callback(self._properties())
             except TuyaApiError:
